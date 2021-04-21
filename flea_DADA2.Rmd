@@ -1,0 +1,179 @@
+---
+title: "2021_01_27_FleaMicrobiome"
+author: "Charlotte Manvell"
+date: "1/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load packages, warning=FALSE}
+library(dada2); packageVersion("dada2")
+library(phyloseq); packageVersion("phyloseq")
+library(here)
+library(ggplot2)
+library(filesstrings)
+library(GEOquery)
+library(ape)
+library(vegan)
+library(RVAideMemoire)
+library(decontam); packageVersion("decontam")
+```
+Extract fastq files from tar file and set up path 
+
+Set up to not run if script is run again as path is now set up
+```{r, eval = FALSE}
+untar(here("flea_main", "fastqfiles_MiSeq2_162_Breitschwerdt_1.tar"), exdir = here("flea_microbiome"))
+untar(here("flea_main", "fastqfiles_MiSeq2_163_Breitschwerdt_2.tar"), exdir = here("flea_microbiome"))
+filestomove <- c(list.files(here("flea_microbiome", "fastqfiles_MiSeq2_163_Breitschwerdt_2")))
+filestomove2 <- c(list.files(here("flea_microbiome", "fastqfiles_MiSeq2_162_Breitschwerdt_1")))
+file.move(here("flea_microbiome", "fastqfiles_MiSeq2_163_Breitschwerdt_2", filestomove), here("flea_microbiome"), overwrite = TRUE)
+file.move(here("flea_microbiome", "fastqfiles_MiSeq2_162_Breitschwerdt_1", filestomove2), here("flea_microbiome"), overwrite = TRUE)
+unlink(here("flea_microbiome", "fastqfiles_MiSeq2_163_Breitschwerdt_2"), recursive = TRUE)
+unlink(here("flea_microbiome", "fastqfiles_MiSeq2_162_Breitschwerdt_1"), recursive = TRUE)
+```
+Set path 
+```{r}
+path <- here("flea_microbiome")
+list.files(path)
+```
+Obtain matched lists of forward and reverse fastq files 
+```{r}
+fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE)) #sort forward sequences
+fnRs <- sort(list.files(path, pattern = "_R2_001.fastq", full.names = TRUE)) #sort reverse sequences
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1) #extract sample names
+```
+
+**Inspect read quality profiles**
+Forward Reads
+```{r}
+plotQualityProfile(fnFs[1:2])
+```
+In order to create read quality plot the following may be run in an Rscript as it doesn't work in Rmarkdown for some unknown reason 
+```{r, eval = FALSE}
+lengthforward <- length(fnFs)
+pdf(here("flea_main", "forwardread.pdf"))
+for(i in 1:2){
+  print(plotQualityProfile(fnFs[[i]]))
+}
+dev.off()
+```
+
+
+Reverse Reads
+```{r}
+plotQualityProfile(fnRs[1:2])
+```
+```{r, eval = FALSE}
+lengthreverse <- length(fnRs)
+pdf(here("flea_main", "reverseread.pdf"))
+for(i in 1:lengthreverse){
+  print(plotQualityProfile(fnRs[[i]]))
+}
+dev.off()
+```
+**Filtering**
+Assign file names
+```{r}
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+names(filtFs) <- sample.names
+names(filtRs) <- sample.names
+```
+
+```{r}
+out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,220),
+              maxN=0, maxEE=c(5,5), truncQ=2, rm.phix=TRUE,
+              compress=TRUE, multithread=FALSE, trimLeft = c(17,21)) # On Windows set multithread=FALSE
+head(out)
+```
+**Error Rates**
+Forward Error Rates
+```{r}
+errF <- learnErrors(filtFs, multithread = TRUE)
+```
+START HERE
+Reverse Error Rates
+```{r}
+errR <- learnErrors(filtRs, multithread = TRUE)
+```
+Plot Forward Errors
+```{r}
+plotErrors(errF, nominalQ=TRUE)
+```
+
+**Sample Inference**
+
+```{r}
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+```
+```{r}
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+```
+Merge sequences 
+```{r}
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
+head(mergers[[1]])
+```
+
+```{r}
+seqtab <- makeSequenceTable(mergers)
+dim(seqtab)
+```
+
+```{r}
+table(nchar(getSequences(seqtab)))
+```
+Remove chimeras 
+```{r}
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+dim(seqtab.nochim)
+```
+Percentage of sequences remaining when chimeras are removed
+```{r}
+(sum(seqtab.nochim)/sum(seqtab))*100
+```
+Track the number of reads in each phase of pipeline
+```{r}
+getN <- function(x) sum(getUniques(x))
+track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
+# If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
+colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
+rownames(track) <- sample.names
+head(track)
+write.csv(track, here("flea_main", "tracked_sequences.csv"))
+```
+## Assign Taxonomy 
+```{r}
+taxa <- assignTaxonomy(seqtab.nochim, here("flea_main", "silva_nr_v132_train_set.fa.gz"), multithread = TRUE)
+taxa.print <- taxa
+rownames(taxa.print) <- NULL
+head(taxa.print)
+```
+
+**Encode File Names**
+```{r}
+samples.out <- rownames(seqtab.nochim)
+sample.names <- gsub("\\._*", "", samples.out)
+flea.info <- read.csv(here("flea_main", "FleaInfo.csv"))
+rownames(flea.info) <- flea.info[,1]
+```
+
+**Construct phyloseq object**
+```{r}
+ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows = FALSE),
+               sample_data(flea.info),
+               tax_table(taxa))
+dna <- Biostrings::DNAStringSet(taxa_names(ps))
+names(dna) <- taxa_names(ps)
+ps <- merge_phyloseq(ps, dna)
+taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
+psProp <- ps %>%
+  transform_sample_counts(function(otu) otu/sum(otu))
+ps 
+saveRDS(ps, here("flea_main", "Fleapsnew.rds")) ## MOVE TO asv_filt_decontam
+```
+
