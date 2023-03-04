@@ -1,0 +1,2067 @@
+---
+title: "2021-07-20-flea-analysis"
+author: "Charlotte Manvell"
+date: "7/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warnings = FALSE)
+```
+
+# Results {.tabset}
+## Setup 
+
+
+```{r, warning = F, message = F}
+library(dada2); packageVersion("dada2")
+library(phyloseq); packageVersion("phyloseq")
+library(bios2mds)
+library(tidyr)
+library(here)
+library(ggplot2)
+library(filesstrings)
+library(GEOquery)
+library(ape)
+library(vegan)
+library(RVAideMemoire)
+library(kableExtra)
+library(decontam); packageVersion("decontam")
+library(scales)
+library(tidyverse)
+library(ggpubr)
+library(devtools)
+library(rentrez)
+library(ggsci)
+library(stats)
+library(haplotypes)
+library(pegas)
+library(msa)
+library(ips)
+library(ggtree)
+library(haplotypes)
+library(microseq)
+library(dplyr)
+library(janitor)
+library(cowplot)
+library(ggforce)
+library(ggtext)
+library(glue)
+```
+
+```{r}
+path <- here("flea_main")
+psdecon <- readRDS(here("flea_main", "ps_noncontam.rds"))
+flea.info <- read.csv(here("flea_main", "FleaInfo.csv"))
+phyloseq_table <- phyloseq(sample_data(flea.info))
+rownames(flea.info) <- flea.info$flea.id
+sample_data(psdecon) <- flea.info
+flea.cox1 <- read.csv(here("flea_main", "FleaInfo_cox1.csv"))
+flea.cox1 <- filter(flea.cox1, cox1 == 1)
+flea.cox1 <- flea.cox1 %>% select(-Sample_or_Control)
+flea.info <- left_join(flea.cox1, flea.info, by = "flea.id")
+psdecon <- prune_samples(flea.cox1$flea.id, psdecon)
+psdecon
+psdeconprop <- psdecon %>%
+  transform_sample_counts(function(otu) otu/sum(otu))
+theme_char <- function(base_size = 11, base_family = ""){
+  theme_bw() %+replace%
+    theme(axis.text = element_text(color = "Black"))
+}
+ps.seq <- refseq(psdecon)
+
+```
+
+
+```{r}
+ps.decon.melt <- psmelt(psdecon)
+```
+
+```{r}
+sequences <- as.data.frame(refseq(psdecon))
+sequences$OTU <- rownames(sequences)
+seqtab <- as.data.frame(tax_table(psdecon))
+seqtab$OTU <- rownames(seqtab)
+sequencedata <- dplyr::full_join(seqtab, sequences, by = "OTU")
+sequencedata <- sequencedata %>% dplyr::filter(Genus == "Wolbachia"| Genus == "Rickettsia" | Genus == "Bartonella" | Genus == "Achromobacter" | Genus == "Peptoniphilus" | Genus == "Rhodococcus")
+```
+
+```{r}
+comparison <- psdecon %>% 
+  psmelt %>% 
+  dplyr::select(-Kingdom, -Phylum, -Class, -Order, -Order, -Family, -Species) %>% 
+  dplyr::rename(BartonellaPCR=bart, 
+                RickettsiaPCR=rick,
+                MycoplasmaPCR=myco,
+                EhrlichiaPCR=ae)
+comparison$Bartonella <- gsub(0, "Negative", comparison$Bartonella)
+comparison$Bartonella <- gsub(1, "Positive", comparison$Bartonella)
+comparison$Rickettsia <- gsub(0, "Negative", comparison$Rickettsia)
+comparison$Rickettsia <- gsub(1, "Positive", comparison$Rickettsia)
+comparison$Mycoplasma <- gsub(0, "Negative", comparison$Mycoplasma)
+comparison$Mycoplasma <- gsub(1, "Positive", comparison$Mycoplasma)
+comparison$Ehrlichia <- gsub(0, "Negative", comparison$Ehrlichia)
+comparison$Ehrlichia <- gsub(1, "Positive", comparison$Ehrlichia)
+comparison.glom <- psdecon %>% 
+  tax_glom(taxrank = "Genus") %>% 
+  psmelt %>% 
+  dplyr::select(-OTU, -Kingdom, -Phylum, -Class, -Order, -Order, -Family) %>% 
+  dplyr::rename(BartonellaPCR=bart, 
+                RickettsiaPCR=rick,
+                MycoplasmaPCR=myco,
+                EhrlichiaPCR=ae) %>% 
+  spread(Genus, Abundance)
+comparison.prop <- psdeconprop %>% 
+  tax_glom(taxrank = "Genus") %>% 
+  psmelt %>% 
+  dplyr::filter(Genus=="Bartonella"| 
+         Genus=="Rickettsia"| 
+         Genus=="Mycoplasma"| 
+         Genus=="Ehrlichia"| 
+         Genus=="Wolbachia"| Genus == "Achromobacter" | Genus == "Rhodococcus" | Genus == "Peptoniphilus") %>%
+  dplyr::select(-OTU, -Kingdom, -Phylum, -Class, -Order, -Order, -Family) %>%
+  dplyr::rename(BartonellaPCR=bart, 
+                RickettsiaPCR=rick,
+                MycoplasmaPCR=myco,
+                EhrlichiaPCR=ae)%>%
+  spread(Genus, Abundance)
+comparison.prop$BartonellaPCR <- ifelse(comparison.prop$BartonellaPCR == 0, "Negative", "Positive")
+comparison.prop$RickettsiaPCR <- ifelse(comparison.prop$RickettsiaPCR == 0, "Negative", "Positive")
+comparison.prop$MycoplasmaPCR <- ifelse(comparison.prop$MycoplasmaPCR == 0, "Negative", "Positive")
+comparison.prop$EhrlichiaPCR <- ifelse(comparison.prop$EhrlichiaPCR == 0, "Negative", "Positive")
+
+wbr.prop<- psdeconprop %>% 
+  tax_glom(taxrank = "Genus") %>% 
+  psmelt %>% 
+  dplyr::filter(Genus=="Bartonella"| 
+         Genus=="Rickettsia"| 
+         Genus=="Mycoplasma"| 
+         Genus=="Ehrlichia"| 
+         Genus=="Wolbachia") %>%
+  dplyr::select(-OTU, -Kingdom, -Phylum, -Class, -Order, -Order, -Family) %>%
+  dplyr::rename(BartonellaPCR=bart, 
+                RickettsiaPCR=rick,
+                MycoplasmaPCR=myco,
+                EhrlichiaPCR=ae)%>%
+  spread(Genus, Abundance)
+answer <- colnames(comparison)
+answer <- gsub("OTU", "Species", answer)
+colnames(comparison) <- c(answer)
+```
+
+
+## Cats
+```{r}
+flea.real <- left_join(flea.cox1, flea.info, by = "flea.id")
+ggplot(flea.real, aes(x = location))+geom_bar()+
+  geom_text(aes(label = ..count..), stat = "count", vjust  = -0.4)
+```
+```{r}
+cat.id <- flea.real %>% distinct(cat.id, .keep_all = TRUE)
+ggplot(cat.id, aes(x = location))+geom_bar()+
+  geom_text(aes(label = ..count..), stat = "count", vjust  = -0.4)
+```
+
+## All Genera
+
+```{r}
+ASVsum <- psdecon %>% psmelt %>% dplyr::group_by(OTU) %>% dplyr::summarise_at(vars(Abundance), list(Abundance = sum))
+sequencedata <- dplyr::left_join(sequencedata, ASVsum, by = "OTU") 
+sequencedata <- sequencedata %>% dplyr::filter(Abundance > 0)
+nwolbachia <- length(grep("Wolbachia", sequencedata$Genus))
+nbartonella <- length(grep("Bartonella", sequencedata$Genus))
+nrick <- length(grep("Rickettsia", sequencedata$Genus))
+nrhodo <- length(grep("Rhodococcus", sequencedata$Genus))
+```
+
+`r nwolbachia` Wolbachia spp. ASVs were identified.
+
+`r nbartonella` Bartonella spp. ASVs were identified. 
+
+`r nrick` Rickettsia spp. ASVs were identified. 
+
+`r nrhodo` Rhodococcus spp. ASVs were identified.
+
+```{r, fig.width = 7, fig.height = 3}
+genera <- c("Bartonella", "Achromobacter", "Peptoniphilus", "Rhodococcus", "Rickettsia", "Wolbachia")
+ngen <- length(genera)
+col.vec <- c(rep("black", length (genera)))
+colors <- data.frame(col.vec)
+colors[,2:(ngen+1)] <- colors$col.vec
+for(i in 1:ngen){
+  colors[i,i] <- "red"}
+sequencedata$Abundance <- as.numeric(sequencedata$Abundance)
+ex <- c(1:ngen)
+for (i in 1:ngen){
+  sequencedata %>% dplyr::filter(Genus == "Wolbachia"| Genus == "Rickettsia" | Genus == "Bartonella" | Genus == "Achromobacter" | Genus == "Peptoniphilus" | Genus == "Rhodococcus") %>%
+  mutate(OTU = fct_reorder(OTU, plyr::desc(Abundance))) %>% 
+  ggplot(aes(x = OTU, y = Abundance, fill = Genus))+
+  geom_col(color = "Black")+
+  theme_char()+scale_fill_manual(values = colors[,i])+
+  scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+              labels = trans_format("log10", math_format(10^.x)))+
+  theme(legend.position = "none", axis.text.x = element_blank())
+ggsave(here("flea_main", "Image", paste0(genera[i], ".png")), plot = last_plot(), height = 5, width = 8)
+}
+generanum <- count(sequencedata, Genus)
+generanumord <- generanum
+generanum$Genus <- factor(generanum$Genus, levels = generanum$Genus)
+generanum$type <- "Number of ASVs"
+generanum <- generanum[order(-generanum$n),]
+generanum$Genus <- factor(generanum$Genus, levels = generanum$Genus)
+ggplot(generanum, aes(y = n, x = Genus))+
+  geom_col(color = "black", fill = "black")+
+  geom_text(aes(label = n), vjust = -0.5)+
+  labs(y = "Number of ASVs")+
+  theme_char()+
+  ylim(0, 560)
+```
+
+```{r, fig.width = 6, fig.height = 6}
+prop.mean <- as.data.frame(colSums(comparison.glom[48:53]))
+
+colnames(prop.mean) <- "n"
+totalread <- sum(prop.mean$n)
+prop.mean$n <- round(prop.mean$n/totalread*100, 1)
+prop.mean$Genus <- rownames(prop.mean)
+prop.mean$type <- "Proportion of Reads"
+colnames(prop.mean) <- c("n", "Genus", "type")
+prop.mean$n <- round(prop.mean$n, 1)
+generanum <- generanum[order(-generanum$n),]
+prop.mean$Genus <- factor(prop.mean$Genus, levels = generanum$Genus)
+ggplot(prop.mean, aes(y = n, x = Genus, fill = Genus))+
+  geom_col(color = "black")+
+  scale_fill_npg()+
+  geom_text(aes(label = paste0(n, "%")), vjust = -0.5)+
+  labs(y = "Proportion of Reads")
+
+```
+
+```{r}
+prop.meanx <- data.frame(prop.mean$Genus, prop.mean$n, prop.mean$type)
+colnames(prop.meanx) <- c("Genus", "n", "type")
+prop.meanx$label <- c(paste0(prop.mean$n, "%"))
+generanum1 <- generanum
+generanum1$n <- round(generanum1$n, 1)
+generanum1$label <- c(as.character(generanum1$n))
+asvtotal <- sum(generanum1$n)
+generanum1$label <- as.numeric(generanum1$n)
+generanum1$label <- as.character(round(generanum1$label/asvtotal*100, 1))
+generanum1$n <- as.numeric(generanum1$label)
+generanum1$label <- paste0(generanum1$label, "%")
+propnum <- bind_rows(generanum1, prop.meanx)
+palette <- pal_nejm(alpha = 1)(5)
+ggplot(propnum, aes(x = Genus, y = n, fill = type))+
+  geom_col(position = "dodge", color = "black")+theme_char()+
+  scale_y_continuous(name = "Number of ASVs", limits = c(0, 100), labels = function(b){paste0(round(b,0), "%")},  sec.axis = sec_axis(~.*1, name = "Proportion of Reads", breaks = c(0, 25, 50, 75, 100), labels = function(b){paste0(round(b,0), "%")}))+
+  scale_fill_manual(values = c(palette[3], palette[5]))+
+  geom_text(aes(label = label), position = position_dodge(width = 0.9), vjust = -0.25)+
+  theme(legend.position = "bottom", axis.title.y = element_text(color = palette[3]), axis.title.y.right = element_text(color = palette[5]))+
+  labs(fill = "")
+```
+
+```{r}
+prop.meanx <- data.frame(prop.mean$Genus, prop.mean$n, prop.mean$type)
+colnames(prop.meanx) <- c("Genus", "n", "type")
+prop.meanx$n <- prop.meanx$n*15
+prop.meanx$label <- c(paste0(prop.mean$n, "%"))
+generanum1 <- generanum
+generanum1$n <- round(generanum1$n, 1)
+generanum1$label <- c(as.character(generanum1$n))
+propnum <- bind_rows(generanum1, prop.meanx)
+palette <- pal_nejm(alpha = 1)(5)
+ggplot(propnum, aes(x = Genus, y = n, fill = type))+
+  geom_col(position = "dodge", color = "black")+theme_char()+
+  scale_y_continuous(name = "Number of ASVs", limits = c(0, 600),  sec.axis = sec_axis(trans = ~.*0.06667, name = "Proportion of Reads", breaks = c(0, 10, 20, 30, 40), labels = function(b){paste0(round(b,0), "%")}))+
+  scale_fill_manual(values = c(palette[3], palette[5]))+
+  geom_text(aes(label = label), position = position_dodge(width = 0.9), vjust = -0.25)+
+  theme(legend.position = "bottom", axis.title.y = element_text(color = palette[3]), axis.title.y.right = element_text(color = palette[5]))+
+  labs(fill = "")
+```
+
+```{r, fig.width = 5, fig.height = 2.5}
+majorprop <- data.frame(genus = "FILTER", 
+                major = c(rep("FILTER", 2)),
+                Abundance = as.numeric(1, 1))
+for(i in 1:length(genera)){
+  x <- sequencedata %>% filter(Genus == genera[i])
+  x$Abundance <- as.numeric(x$Abundance)
+  y <- data.frame(genus = genera[i], 
+                        major = c("Dominant", "Other"))
+  y$Abundance <- c(x[1,"Abundance"], sum(x[2:nrow(x), "Abundance"]))
+  majorprop <- bind_rows(majorprop, y)}
+majorprop <- majorprop[-c(1,2),]
+totalread <- sum(majorprop$Abundance)
+majorprop$n <- round((majorprop$Abundance/totalread)*100, 1)
+
+majorprop$vjust <- ifelse(majorprop$major == "Dominant", -0.4, -1)
+majorprop$vjust <- ifelse(majorprop$major == "Other" & majorprop$genus == "Wolbachia", -1.6, majorprop$vjust)
+majorprop$genus <- factor(majorprop$genus, levels = generanum$Genus)
+majorprop$major <- factor(majorprop$major, levels = c("Other", "Dominant"))
+majorpropx <- data.frame(Genus = majorprop$genus, n = majorprop$n, type = majorprop$major)
+colnames(majorpropx) <- c("Genus", "n", "type")
+majorpropx$n <- majorpropx$n*15
+majorpropx$label <- c(paste0(majorprop$n, "%"))
+generanum1 <- generanum
+generanum1$n <- round(generanum1$n, 1)
+generanum1$label <- c(as.character(generanum1$n))
+propnum1 <- bind_rows(generanum1, majorpropx)
+palette <- pal_nejm(alpha = 1)(5)
+
+propnum1$type <- gsub("Dominant", "Dominant ASV", propnum1$type)
+propnum1$type <- gsub("Other", "Other ASVs", propnum1$type)
+propnum1$type <- factor(propnum1$type, levels = c("Number of ASVs", "Dominant ASV", "Other ASVs"))
+
+propnum2 <- propnum1 %>% filter(type != "Other ASVs")
+propnum.bind <- propnum %>% filter(type == "Proportion of Reads")
+propnum2 <- bind_rows(propnum2, propnum.bind)
+propnum2$type <- gsub("Dominant ASV", "Proportion (Dominant ASV)", propnum2$type)
+propnum2$type <- gsub("Proportion of Reads", "Proportion (All ASVs)", propnum2$type)
+propnum2$type <- factor(propnum2$type, levels = c("Number of ASVs", "Proportion (All ASVs)", "Proportion (Dominant ASV)"))
+
+propnum2 <- propnum2 %>% mutate(GenusItal = glue("<i>{Genus}</i>"))
+factor(propnum2$GenusItal)
+propnum2 %>% mutate(GenusItal = factor(GenusItal, levels = factor(propnum2$GenusItal)[1:6])) %>% 
+  ggplot(aes(x = GenusItal, y = n, fill = type))+
+  geom_col(position = position_dodge2(preserve = "total"), color = "black")+theme_char()+
+  scale_y_continuous(name = "Number of ASVs", limits = c(0, 700),  sec.axis = sec_axis(trans = ~.*0.06667, name = "Proportion of Reads", breaks = c(0, 10, 20, 30, 40), labels = function(b){paste0(round(b,0), "%")}))+
+  scale_fill_manual(values = c(palette[3], "Black", "grey"))+
+  geom_text(aes(label = label), position = position_dodge(width = 1), vjust = -0.25)+
+  theme(legend.position = "bottom", axis.title.y = element_text(color = palette[3]), axis.title.y.right = element_text(color = "Black"), axis.text.x = element_markdown())+
+  labs(fill = "", x = "Genus")
+```
+
+```{r, fig.width = 12}
+prop.plot <- data.frame(flea.id = c(rep(comparison.prop$flea.id, 6)), 
+                        location = c(rep(comparison.prop$location, 6)),
+                        genus = c(rep("Bartonella", nrow(comparison.prop)), rep("Rickettsia", nrow(comparison.prop)),                                   rep("Wolbachia", nrow(comparison.prop)), rep("Achromobacter", nrow(comparison.prop)),                                     rep("Peptoniphilus", nrow(comparison.prop)), rep("Rhodococcus",                                                       nrow(comparison.prop))),
+                        prop = c(comparison.prop$Bartonella, comparison.prop$Rickettsia, comparison.prop$Wolbachia, comparison.prop$Achromobacter, comparison.prop$Peptoniphilus, comparison.prop$Rhodococcus)
+                        )
+prop.plot.b <- prop.plot %>% filter(genus == "Bartonella")
+prop.plot.b <- prop.plot.b %>% arrange(prop)
+prop.plot %>% arrange(factor(flea.id, levels = prop.plot.b$flea.id)) %>% 
+  ggplot(aes(fill = genus, x = flea.id, y = prop))+
+  geom_col()+
+  facet_grid(cols = vars(location), scales = "free_x", space = "free_x")+
+  theme_char()+theme(legend.position = "bottom")
+  
+```
+
+```{r, fig.width = 7, fig.height = 2}
+comparison.glom.wbr <- data.frame(flea.id = comparison.glom$flea.id, 
+                                  location = comparison.glom$location,
+                                  Bartonella = comparison.glom$Bartonella,
+                                  Rickettsia = comparison.glom$Rickettsia,
+                                  Wolbachia = comparison.glom$Wolbachia)
+comparison.glom.wbr <- comparison.glom.wbr %>% mutate(BartonellaProp = Bartonella/(Bartonella+Rickettsia+Wolbachia))
+comparison.glom.wbr$BartonellaProp <- ifelse(comparison.glom.wbr$BartonellaProp == "NaN", 0, comparison.glom.wbr$BartonellaProp)
+comparison.glom.wbr <- comparison.glom.wbr %>% mutate(RickettsiaProp = Rickettsia/(Bartonella+Rickettsia+Wolbachia))
+comparison.glom.wbr$RickettsiaProp <- ifelse(comparison.glom.wbr$RickettsiaProp == "NaN", 0, comparison.glom.wbr$RickettsiaProp)
+comparison.glom.wbr <- comparison.glom.wbr %>% mutate(WolbachiaProp = Wolbachia/(Bartonella+Rickettsia+Wolbachia))
+comparison.glom.wbr$WolbachiaProp <- ifelse(comparison.glom.wbr$WolbachiaProp == "NaN", 0, comparison.glom.wbr$WolbachiaProp)
+comparison.glom.wbr<- comparison.glom.wbr %>% arrange(desc(BartonellaProp), desc(RickettsiaProp), desc(WolbachiaProp))
+
+prop.plot.wbr <- data.frame(flea.id = c(rep(comparison.glom.wbr$flea.id, 3)), 
+                        location = c(rep(comparison.glom.wbr$location, 3)),
+                        genus = c(rep("Bartonella", nrow(comparison.glom)), rep("Rickettsia", nrow(comparison.glom)), rep("Wolbachia", nrow(comparison.glom))), prop = c(comparison.glom.wbr$BartonellaProp, comparison.glom.wbr$RickettsiaProp, comparison.glom.wbr$WolbachiaProp))
+prop.plot.wbr <-prop.plot.wbr %>% filter(prop > 0)
+                        
+prop.plot.wbr$flea.id <- factor(prop.plot.wbr$flea.id, levels = c(comparison.glom.wbr$flea.id))
+locorder <- c("San Francisco, CA", "Davis, CA", "Sulphur, LA", "Gastonia, NC", "Harnett, NC", "Washington, NC", "London, UK")
+prop.plot.wbr$location <- factor(prop.plot.wbr$location, levels = c(locorder))
+
+prop.plot.wbr <- prop.plot.wbr %>% mutate(GenusItal = glue("<i>{genus}</i>"))
+
+prop.plot.wbr %>% 
+  ggplot(aes(fill = GenusItal, x = flea.id, y = prop))+
+  geom_col(position = position_fill(), color = "white")+
+  theme_char()+theme(legend.position = "right", axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_markdown())+scale_fill_npg()+
+  labs(y = "Proportion of Reads", fill = "Genus", x = "Flea Sample")
+```
+
+```{r, fig.width = 5, fig.height = 2.7}
+ex <- data.frame(comparison.glom %>% 
+  group_by(location) %>% 
+  summarise(Bartonella = sum(Bartonella), Achromobacter = sum(Achromobacter), Peptoniphilus = sum(Peptoniphilus), 
+            Rhodococcus = sum(Rhodococcus), Rickettsia = sum(Rickettsia), Wolbachia = sum(Wolbachia)))
+rownames(ex) <- ex$location
+ex <- select(ex, -location)
+ex <- round(ex/rowSums(ex)*100, 1)
+ex$location <- rownames(ex)
+ex <- melt(ex)
+ex$fill <- "North Carolina"
+ex$fill <- ifelse(ex$location == "San Francisco, CA" | ex$location == "Davis, CA", "California", ex$fill)
+ex$fill <- ifelse(ex$location == "London, UK", "United Kingdom", ex$fill)
+ex$fill <- ifelse(ex$location == "Sulphur, LA", "Louisiana", ex$fill)
+loccount <- count(flea.info, location)
+loccount$n <- paste0(loccount$location, " (", loccount$n, ")")
+
+ex$location[ex$location %in% loccount$location] <- loccount$n[match(ex$location, loccount$location)]
+
+locorder <- c("London, UK", "Davis, CA", "Washington, NC", "Sulphur, LA", "Harnett, NC", "Gastonia, NC", "San Francisco, CA")
+loccount <- loccount %>% mutate(location = factor(location, levels = locorder)) %>% arrange(location)
+ex$location <- factor(ex$location, levels = loccount$n)
+ex$variable <- factor(ex$variable, levels = c("Bartonella", "Rickettsia", "Wolbachia", "Achromobacter", "Peptoniphilus", "Rhodococcus"))
+
+ex <- ex %>% mutate(variableital = glue("<i>{variable}</i>"))
+
+ex %>% mutate(variableital = factor(variableital, levels = c("<i>Bartonella</i>", "<i>Rickettsia</i>", "<i>Wolbachia</i>", "<i>Achromobacter</i>", "<i>Peptoniphilus</i>", "<i>Rhodococcus</i>"))) %>% 
+  ggplot(aes(x = location, y = value, fill = fill))+
+  geom_col(color = "black")+
+  facet_wrap(~variableital, nrow = 2)+
+  theme_char()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "right", strip.text = element_markdown())+
+  scale_fill_jama()+
+  geom_text(aes(label = paste0(value, "%")), vjust = -0.5, size = 3.3)+
+  scale_y_continuous(labels = function(b){paste0(round(b,0), "%")}, limits = c(0, 85))+
+  labs(y = "Proportion of Reads", x = "", fill = "State or Country")+
+  guides()
+ggsave(here("flea_main", "Image", "propreads_genera.png"), width = 10, height = 6.15)
+```
+
+```{r, fig.width = 8}
+ex1 <- data.frame(comparison.glom %>% 
+  group_by(location) %>% 
+  summarise(Bartonella = sum(Bartonella), Achromobacter = sum(Achromobacter), Peptoniphilus = sum(Peptoniphilus), 
+            Rhodococcus = sum(Rhodococcus), Rickettsia = sum(Rickettsia), Wolbachia = sum(Wolbachia)))
+nflea1 <- data.frame(table(comparison.glom$location))
+colnames(nflea1) <- c("location", "nflea")
+rownames(ex1) <- ex1$location
+ex1 <- left_join(ex1, nflea1, by = "location")
+ex1 <- ex1 %>% select(-location)
+ex1 <- ex1/ex1$nflea
+ex1$location <- nflea1$location
+ex1 <- select(ex1, -nflea)
+ex1 <- melt(ex1)
+ex1$location <- factor(ex1$location, levels = c("London, UK", "Sulphur, LA", "Washington, NC", "Davis, CA", "Harnett, NC", "Gastonia, NC", "San Francisco, CA"))
+ex1 %>% 
+  ggplot(aes(x = variable, y = value, fill = variable))+
+  geom_col(color = "black")+
+  facet_wrap(~location, nrow = 2)+
+  theme_char()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")+
+  scale_fill_npg()+
+  labs(y = "Number of Reads", x = "Genus", fill = "Genus")+
+  guides(fill = guide_legend(nrow = 1))
+  
+```
+
+
+```{r, fig.width = 5, fig.height = 2.7}
+comparison.glom$BartTF <- ifelse(comparison.glom$Bartonella == 0, 0, 1)
+comparison.glom$RickTF <- ifelse(comparison.glom$Rickettsia == 0, 0, 1)
+comparison.glom$WolbTF <- ifelse(comparison.glom$Wolbachia == 0, 0, 1)
+comparison.glom$PeptTF <- ifelse(comparison.glom$Peptoniphilus == 0, 0, 1)
+comparison.glom$HathTF <- ifelse(comparison.glom$Achromobacter == 0, 0, 1)
+comparison.glom$RhodoTF <- ifelse(comparison.glom$Rhodococcus == 0, 0, 1)
+
+comp <- data.frame(comparison.glom$location)
+colnames(comp) <- c("location")
+comp$Bartonella <- ifelse(comparison.glom$Bartonella == 0, 0, 1)
+comp$Rickettsia <- ifelse(comparison.glom$Rickettsia == 0, 0, 1)
+comp$Wolbachia <- ifelse(comparison.glom$Wolbachia == 0, 0, 1)
+comp$Peptoniphilus <- ifelse(comparison.glom$Peptoniphilus == 0, 0, 1)
+comp$Achromobacter <- ifelse(comparison.glom$Achromobacter == 0, 0, 1)
+comp$Rhodococcus <- ifelse(comparison.glom$Rhodococcus == 0, 0, 1)
+comp.melt <- melt(comp)
+comp.meltdf <- comp.melt %>% count(location, variable, value)
+# comp.meltdf$percentage <- comp.meltdf %>% transmute(percentage = )
+
+results <- data.frame(1:7, 1:7, 1:7, 1:7, 1:7, 1:7, 1:7)
+for(i in 1:length(unique(comparison.glom$location))){
+  locvec <- unique(comparison.glom$location)
+  locinterest <- comparison.glom %>% filter(location == locvec[i])
+  totalflea <- nrow(locinterest)
+  results[i,1] <- round(sum(locinterest$BartTF)/totalflea*100, 1)
+  results[i,2] <- round(sum(locinterest$HathTF)/totalflea*100, 1)
+  results[i,3] <- round(sum(locinterest$PeptTF)/totalflea*100, 1)
+  results[i,4] <- round(sum(locinterest$RhodoTF)/totalflea*100, 1)
+  results[i,5] <- round(sum(locinterest$RickTF)/totalflea*100, 1)
+  results[i,6] <- round(sum(locinterest$WolbTF)/totalflea*100, 1)
+  results[i,7] <- locvec[i]}
+colnames(results) <- c("Bartonella", "Achromobacter", "Peptoniphilus", "Rhodococcus", "Rickettsia", "Wolbachia", "Location")
+results.melt <- melt(results)
+results.melt$Location <- factor(results.melt$Location, levels = c("London, UK", "Sulphur, LA", "Washington, NC", "Davis, CA", "Harnett, NC", "Gastonia, NC", "San Francisco, CA"))
+results.melt$variable <- factor(results.melt$variable, levels = c("Bartonella", "Rickettsia", "Wolbachia", "Achromobacter", "Peptoniphilus", "Rhodococcus"))
+results.melt$fill <- "North Carolina"
+results.melt$fill <- ifelse(results.melt$Location == "San Francisco, CA" | results.melt$Location == "Davis, CA", "California", results.melt$fill)
+results.melt$fill <- ifelse(results.melt$Location == "London, UK", "United Kingdom", results.melt$fill)
+results.melt$fill <- ifelse(results.melt$Location == "Sulphur, LA", "Louisiana", results.melt$fill)
+
+loccount <- count(flea.info, location)
+loccount$n <- paste0(loccount$location, " (", loccount$n, ")")
+colnames(results.melt) <- gsub("Location", "location", colnames(results.melt))
+results.melt <- left_join(results.melt, loccount, by = "location")
+
+loccount <- loccount %>% mutate(location = factor(location, levels = locorder)) %>% arrange(location)
+results.melt$n <- factor(results.melt$n, levels = loccount$n)
+results.melt$variable <- factor(results.melt$variable, levels = c("Bartonella", "Rickettsia", "Wolbachia", "Achromobacter", "Peptoniphilus", "Rhodococcus"))
+
+results.melt <- results.melt %>% mutate(variableital = glue("<i>{variable}</i>"))
+levels(factor(ex$variableital))
+
+results.melt %>% mutate(variableital = factor(variableital, levels = c("<i>Bartonella</i>", "<i>Rickettsia</i>", "<i>Wolbachia</i>", "<i>Achromobacter</i>", "<i>Peptoniphilus</i>", "<i>Rhodococcus</i>"))) %>% 
+ggplot(aes(y = value, fill = fill, x = n))+
+  geom_col(position = "dodge", color = "black")+
+  scale_fill_jama()+
+  facet_wrap(~variableital, nrow = 2)+
+  theme_char()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "right", strip.text = element_markdown())+
+  labs(y = "Proportion of Fleas", fill = "State or Country", x = "")+
+  geom_text(aes(label = paste0(value, "%")), vjust = -0.5, size = 3.2)+
+  scale_y_continuous(labels = function(b){paste0(round(b,0), "%")}, limits = c(0, 110), breaks = c(0, 25, 50, 75, 100))+
+  guides()
+ggsave(here("flea_main", "Image", "propflea_genera.png"), width = 10, height = 6.15)
+```
+
+
+```{r, fig.width = 6}
+names <- c("bartreads", "hathreads", "peptreads", "rhodoreads", "rickreads", "wolbreads")
+comp.glom.col <- colnames(comparison.glom)
+ngen <- 6
+listofdf <- list()
+nsample <- nsamples(psdecon)
+newbox <- data.frame()
+for(i in 1:ngen){
+  df <- data.frame(comparison.glom[,i+47], rep(comp.glom.col[i+47], nsample), comparison.glom$location, comparison.glom$flea.id, comparison.glom$bartspp)
+  colnames(df) <- c("Reads", "Genus", "Location", "Flea ID", "Bartonella")
+  listofdf[[i]] <- df
+  newbox <- bind_rows(newbox, listofdf[[i]])
+  colnames(newbox) <- c("Reads", "Genus", "Location", "Flea ID", "Bartonella")
+}
+
+newbox$fill <- "North Carolina"
+newbox$fill <- ifelse(newbox$Location == "San Francisco, CA" | newbox$Location == "Davis, CA", "California", newbox$fill)
+newbox$fill <- ifelse(newbox$Location == "London, UK", "United Kingdom", newbox$fill)
+newbox$fill <- ifelse(newbox$Location == "Sulphur, LA", "Louisiana", newbox$fill)
+loccount <- count(flea.info, location)
+loccount$n <- paste0(loccount$location, " (", loccount$n, ")")
+colnames(newbox) <- gsub("Location", "location", colnames(newbox))
+newbox <- left_join(newbox, loccount, by = "location")
+
+
+loccount <- loccount %>% mutate(location = factor(location, levels = locorder)) %>% arrange(location)
+newbox$n <- factor(newbox$n, levels = loccount$n)
+newbox$Genus <- factor(newbox$Genus, levels = c("Bartonella", "Rickettsia", "Wolbachia", "Achromobacter", "Peptoniphilus", "Rhodococcus"))
+
+ggplot(newbox, aes(y = Reads, x = location, color = location))+
+  geom_sina(alpha = 0.5)+theme_char()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  facet_wrap(~Genus)
+
+newbox %>% filter(Reads > 0) %>% 
+  ggplot(aes(y = Reads, x = n, color = fill))+
+  geom_sina(alpha = 0.7)+theme_char()+scale_color_jama()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "right")+
+  facet_wrap(~Genus)+
+  labs(y = "Number of Reads", color = "State or Country", x = "")
+ggsave(here("flea_main", "Image", "nread_genera.png"), width = 10, height = 6.15)
+```
+
+```{r, fig.height = 8, fig.width = 8}
+a <- comparison.glom %>% filter(Bartonella > 0) %>% 
+  ggplot(aes(y = Bartonella, x = location, color = location))+
+  geom_sina(alpha = 0.5)+ theme_char()+
+  labs(x = "Location", color = "Location")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+b <- comparison.glom %>% filter(Achromobacter > 0) %>% 
+  ggplot(aes(y = Achromobacter, x = location, color = location))+
+  geom_sina(alpha = 0.5)+ theme_char()+
+  labs(x = "Location", color = "Location")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+c <- comparison.glom %>% filter(Peptoniphilus > 0) %>% 
+  ggplot(aes(y = Peptoniphilus, x = location, color = location))+
+  geom_sina(alpha = 0.5)+ theme_char()+
+  labs(x = "Location", color = "Location")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+d <- comparison.glom %>% filter(Rhodococcus > 0) %>% 
+  ggplot(aes(y = Rhodococcus, x = location, color = location))+
+  geom_sina(alpha = 0.5)+ theme_char()+
+  labs(x = "Location", color = "Location")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+e <- comparison.glom %>% filter(Rickettsia > 0) %>% 
+  ggplot(aes(y = Rickettsia, x = location, color = location))+
+  geom_sina(alpha = 0.5)+ theme_char()+
+  labs(x = "Location", color = "Location")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+f <- comparison.glom %>% filter(Wolbachia > 0) %>% 
+  ggplot(aes(y = Wolbachia, x = location, color = location))+
+  geom_sina(alpha = 0.5)+ theme_char()+
+  labs(x = "Location", color = "Location")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+plot_grid(a, b, c, d, e, f)
+```
+
+```{r, fig.height = 8, fig.width = 8}
+a <- comparison.glom %>% filter(Bartonella > 0) %>% 
+  ggplot(aes(y = Bartonella, x = nguL, color = nguL))+
+  geom_jitter(alpha = 0.5)+ theme_char()+
+  labs(x = "nguL", color = "nguL")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+b <- comparison.glom %>% filter(Achromobacter > 0) %>% 
+  ggplot(aes(y = Achromobacter, x = nguL, color = nguL))+
+  geom_jitter(alpha = 0.5)+ theme_char()+
+  labs(x = "nguL", color = "nguL")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+c <- comparison.glom %>% filter(Peptoniphilus > 0) %>% 
+  ggplot(aes(y = Peptoniphilus, x = nguL, color = nguL))+
+  geom_jitter(alpha = 0.5)+ theme_char()+
+  labs(x = "nguL", color = "nguL")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+d <- comparison.glom %>% filter(Rhodococcus > 0) %>% 
+  ggplot(aes(y = Rhodococcus, x = nguL, color = nguL))+
+  geom_jitter(alpha = 0.5)+ theme_char()+
+  labs(x = "nguL", color = "nguL")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+e <- comparison.glom %>% filter(Rickettsia > 0) %>% 
+  ggplot(aes(y = Rickettsia, x = nguL, color = nguL))+
+  geom_jitter(alpha = 0.5)+ theme_char()+
+  labs(x = "nguL", color = "nguL")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+f <- comparison.glom %>% filter(Wolbachia > 0) %>% 
+  ggplot(aes(y = Wolbachia, x = nguL, color = nguL))+
+  geom_jitter(alpha = 0.5)+ theme_char()+
+  labs(x = "nguL", color = "nguL")+theme(legend.position = "none", axis.text.x = element_text(angle = 45, size = 8, hjust = 1))+
+  ylim(0, 35000)
+plot_grid(a, b, c, d, e, f)
+```
+
+```{r, fig.width = 6}
+nb <- newbox
+nb$Bartonella[nchar(nb$Bartonella)==0] <- "Negative"
+nb$Bartonella <- factor(nb$Bartonella, levels = c("Negative", "B. clarridgeiae", "B. henselae", "B. koehlerae", "B. vinsonii berkhoffii"))
+nb %>% filter(Genus == "Bartonella") %>% filter(Reads > 0) %>% 
+ggplot(aes(x = Bartonella, y = Reads, color = Bartonella))+
+  geom_sina(alpha = 0.5)+theme_char()+
+  facet_wrap(~location, nrow = 2)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), axis.text.y =  element_text(size = 6), axis.title = element_text(size = 10), legend.position = "none")+
+  scale_color_npg()+
+  labs(y = "Number of Reads", color = "Bartonella qPCR Result", x = "Bartonella qPCR Result")
+```
+
+```{r, fig.width = 6, fig.height = 7}
+names <- c("bartreads", "hathreads", "peptreads", "rhodoreads", "rickreads", "wolbreads")
+comp.glom.col <- colnames(comparison.glom)
+ngen <- 6
+listofdfssra <- list()
+newboxssra <- data.frame()
+for(i in 1:ngen){
+  dfssra <- data.frame(comparison.glom[,i+47], rep(comp.glom.col[i+47], nsample), comparison.glom$location, comparison.glom$flea.id, comparison.glom$ssrAspp)
+  colnames(dfssra) <- c("Reads", "Genus", "Location", "Flea ID", "Bartonella")
+  listofdfssra[[i]] <- dfssra
+  newboxssra <- bind_rows(newboxssra, listofdfssra[[i]])
+  colnames(newboxssra) <- c("Reads", "Genus", "Location", "Flea ID", "Bartonella")
+}
+newboxssra$Location <- factor(newboxssra$Location, levels = c("San Francisco, CA", "Davis, CA", "Sulphur, LA", "Gastonia, NC", "Harnett, NC", "Washington, NC", "London, UK"))
+
+nb <- newboxssra
+nb$NGS <- ifelse(nb$Reads == 0, "Negative", "Positive")
+nb$NGS <- factor(nb$NGS, levels = c("Positive", "Negative"))
+nb$Bartonella[nchar(nb$Bartonella)==0] <- "Negative"
+nb$Bartonella <- factor(nb$Bartonella, levels = c("Negative", "B. clarridgeiae", "B. henselae", "B. koehlerae", "B. vinsonii berkhoffii"))
+ssrAnb <- nb
+nb %>% filter(Genus == "Bartonella") %>% 
+  ggplot(aes(x = Bartonella, fill = NGS))+
+  geom_bar(color = "black")+theme_char()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "right")+
+  scale_fill_manual(values = c("white", "black"))+
+  labs(y = "Number of Fleas", color = "Bartonella ssrA qPCR Result", x = "Bartonella ssrA qPCR Result")+
+  geom_text(aes(label = ..count..), stat = "count", vjust  = -0.4, position = "stack")+ylim(0, 160)
+```
+
+```{r, fig.width = 6, fig.height = 7}
+names <- c("bartreads", "hathreads", "peptreads", "rhodoreads", "rickreads", "wolbreads")
+comp.glom.col <- colnames(comparison.glom)
+ngen <- 6
+listofdfITS <- list()
+newboxITS <- data.frame()
+for(i in 1:ngen){
+  dfITS <- data.frame(comparison.glom[,i+47], rep(comp.glom.col[i+47], nsample), comparison.glom$location, comparison.glom$flea.id, comparison.glom$itsspp)
+  colnames(dfITS) <- c("Reads", "Genus", "Location", "Flea ID", "Bartonella")
+  listofdfITS[[i]] <- dfITS
+  newboxITS <- bind_rows(newboxITS, listofdfITS[[i]])
+  colnames(newboxITS) <- c("Reads", "Genus", "Location", "Flea ID", "Bartonella")
+}
+newboxITS$Location <- factor(newboxITS$Location, levels = c("San Francisco, CA", "Davis, CA", "Sulphur, LA", "Gastonia, NC", "Harnett, NC", "Washington, NC", "London, UK"))
+
+nb <- newboxITS
+nb$NGS <- ifelse(nb$Reads == 0, "Negative", "Positive")
+nb$NGS <- factor(nb$NGS, levels = c("Negative", "Positive"))
+nb$Bartonella[nchar(nb$Bartonella)==0] <- "Negative"
+nb$Bartonella <- factor(nb$Bartonella, levels = c("Negative", "B. clarridgeiae", "B. henselae", "B. koehlerae", "B. vinsonii berkhoffii"))
+ITSnb <- nb
+nb %>% filter(Genus == "Bartonella") %>% 
+  ggplot(aes(x = Bartonella, fill = NGS))+
+  geom_bar(color = "black")+theme_char()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "right")+
+  scale_fill_manual(values = c("white", "black"))+
+  labs(y = "Number of Fleas", color = "Bartonella ITS qPCR Result", x = "Bartonella ITS qPCR Result")+
+  geom_text(aes(label = ..count..), stat = "count", vjust  = -0.4, position = "stack")+ylim(0, 160)
+```
+
+```{r, fig.height = 7, fig.width = 5}
+ssrAnb$qPCR <- "ssrA"
+ITSnb$qPCR <- "ITS"
+nball <- bind_rows(ssrAnb, ITSnb)
+nball$NGS <- factor(nball$NGS, levels = c("Negative", "Positive"))
+
+bartnb <- nball %>% filter(Genus == "Bartonella")
+bartnb%>% 
+  ggplot(aes(x = Bartonella, fill = NGS))+
+  geom_bar(color = "black")+theme_char()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom")+
+  scale_fill_manual(values = c("white", "black"))+
+  labs(y = "Number of Fleas", color = "Bartonella qPCR Species", x = "Bartonella qPCR Result")+
+  geom_text(aes(label = ..count..), size = 3.5, stat = "count", vjust  = -0.3, position = "stack")+
+  ylim(0, 160)+
+  facet_wrap(~qPCR)
+ggsave(filename = here("flea_main", "Image", "ITS_ssrA_comp.png"), height = 7, width = 5)
+```
+
+```{r}
+comp.qpcr <- as.data.frame(tabyl(comparison.glom, bartspp, BartTF))
+comp.qpcr[1,1] <- "Negative"
+comp.qpcr2 <- data.frame("qPCR" = c(comp.qpcr[,1], comp.qpcr[,1]),
+                         "NGS" = c(rep("Negative", nrow(comp.qpcr)), rep("Positive", nrow(comp.qpcr))),
+                        "n" = c(comp.qpcr[,2], comp.qpcr[,3]))
+comp.qpcr2 %>% 
+  ggplot(aes(x = qPCR, y = n, fill = NGS))+
+  geom_col(color = "black")+
+  scale_fill_manual(values = c("white", "black"))+
+  theme_char()+
+  labs(y = "Number of Fleas", x = "Bartonella qPCR Result")
+```
+
+
+
+```{r}
+nb %>% filter(Genus == "Bartonella") %>% filter(Reads == 0) %>% 
+  ggplot(aes(x = Bartonella, fill = Bartonella))+
+  geom_bar(color = "black")+theme_char()+
+  facet_wrap(~Location, nrow = 2)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none")+
+  scale_color_npg()+
+  labs(y = "Number of Fleas", color = "Bartonella qPCR Result", x = "Bartonella qPCR Result")+
+  geom_text(aes(label = ..count..), stat = "count", vjust  = -0.5)+
+  ylim(0, 32)
+```
+
+
+
+```{r, fig.height = 6, fig.width = 12}
+bartresults <- data.frame(1:2, 1:2)
+for(i in 1:length(unique(comparison.glom$location))){
+  locvec <- unique(comparison.glom$location)
+  locinterest <- comparison.glom %>% filter(location == locvec[i])
+  totalflea <- nrow(locinterest)
+  bartresults[i,1] <- round(sum(locinterest$BartonellaPCR)/totalflea*100, 1)
+  bartresults[i,2] <- locvec[i]}
+colnames(bartresults) <- c("Bartonella", "Location")
+bartresults.melt <- reshape2::melt(bartresults)
+bartresults.melt$Location <- factor(bartresults.melt$Location, levels = c("San Francisco, CA", "Davis, CA", "Sulphur, LA", "Gastonia, NC", "Harnett, NC", "Washington, NC", "London, UK"))
+bartngsresults.melt <- filter(results.melt, variable == "Bartonella")
+bartngsresults.melt$method <- "NGS"
+bartresults.melt$method <- "qPCR"
+colnames(bartresults.melt) <- gsub("Location", "location", colnames(bartresults.melt))
+bartresults.melt <- left_join(bartresults.melt, loccount, by = "location")
+bartresults.melt$fill <- "X"
+
+bartresults.melt <- bind_rows(bartresults.melt, bartngsresults.melt)
+bartresults.melt$fill <- "North Carolina"
+bartresults.melt$fill <- ifelse(bartresults.melt$location == "San Francisco, CA" | bartresults.melt$location == "Davis, CA", "California", bartresults.melt$fill)
+bartresults.melt$fill <- ifelse(bartresults.melt$location == "London, UK", "United Kingdom", bartresults.melt$fill)
+bartresults.melt$fill <- ifelse(bartresults.melt$location == "Sulphur, LA", "Louisiana", bartresults.melt$fill)
+
+loccount <- loccount %>% mutate(location = factor(location, levels = locorder)) %>% arrange(location)
+bartresults.melt$n <- factor(bartresults.melt$n, levels = loccount$n)
+
+
+bartresults.melt$location <- factor(bartresults.melt$location, levels = c("London, UK", "Sulphur, LA", "Washington, NC", "Davis, CA", "Harnett, NC", "Gastonia, NC", "San Francisco, CA"))
+ggplot(bartresults.melt, aes(y = value, fill = fill, x = n))+
+  geom_col(position = "dodge", color = "black")+
+  scale_fill_jama()+
+  theme_char()+facet_wrap(~method)+
+  geom_text(aes(label = paste0(value, "%")), vjust = -0.5, position = position_dodge(width = 0.9), size = 5)+
+  scale_y_continuous(name = "Percentage of Fleas", labels = function(x) paste0(x, "%"), limits = c(0, 75), breaks = c(0, 25, 50, 75))+
+  theme( axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "none", axis.text = element_text(size = 15), axis.title.y = element_text(size = 15), strip.text = element_text(size=15))+
+  labs(x = "")
+```
+
+```{r}
+ngs.pcr <- data.frame(tabyl(comparison.glom, BartTF, BartonellaPCR))
+colnames(ngs.pcr) <- c("NGS Result", "qPCR Negative", "qPCR Positive")
+kbl(ngs.pcr)%>%
+  kable_classic()%>%
+  kable_styling(full_width=F)
+chisq.test(tabyl(comparison.glom, BartTF, BartonellaPCR))
+sum(comparison.glom$BartTF)
+```
+
+
+```{r}
+bart.ct <- comparison.glom %>% select(bartspp, ssrAct, ssrA, Bartonella, BartTF, location) %>% filter(ssrAct > 0)
+bart.ct$ssrAct <- as.numeric(bart.ct$ssrAct)
+bart.ct %>% 
+  ggplot(aes(x = bartspp, y = ssrAct, color = bartspp))+
+  facet_wrap(~BartTF)+
+  geom_jitter(alpha = 0.7)
+```
+
+
+
+```{r}
+x <- comparison.glom[,48:53]
+spp <- function(x){
+  for(i in 1:ncol(x)){
+  Range <- round(range(x[,i]), 2)
+  Range <- paste(Range[1], "-", Range[2])
+  Mean <- round(mean(x[,i]), 2)
+  Stand <- round(sd(x[,i]), 2)
+  Median <- round(median(x[,i]), 2)
+  Num <- length(which(x[,i] > 0))
+  Output[i,2] <- Range
+  Output[i,3] <- Mean
+  Output[i,4] <- Median
+  Output[i,5] <- Stand
+  Output[i,6] <- Num
+  colnames(Output) <- c("Genus", "Range", "Mean", "Median", "Standard Deviation", "# Samples > 0 Reads")}
+  return(Output)
+}
+Output <- data.frame(colnames(x))
+kbl(spp(x))%>%
+  kable_classic()%>%
+  kable_styling(full_width=F)
+```
+
+```{r}
+locspp <- function(x, y){
+  for(i in 1:length(unique(x$location))){
+  locations <- unique(x$location)
+  b <- x %>% filter(location == locations[i])
+  col <- grep(paste0("\\b", y, "\\b"), colnames(x))
+  Range <- round(range(b[,col]), 2)
+  Range <- paste(Range[1], "-", Range[2])
+  Mean <- round(mean(b[,col]), 2)
+  Stand <- round(sd(b[,col]), 2)
+  Median <- round(median(b[,col]), 2)
+  Num <- as.numeric(length(which(b[,col] > 0)))
+  Percent <- round((Num/nrow(b))*100, 2)
+  LocationOutput[i,1] <- locations[i]
+  LocationOutput[i,2] <- Range
+  LocationOutput[i,3] <- Mean
+  LocationOutput[i,4] <- Median
+  LocationOutput[i,5] <- Stand
+  LocationOutput[i,6] <- Num
+  LocationOutput[i,7] <- Percent
+  colnames(LocationOutput) <- c("Location", "Range", "Mean", "Median", "Standard Deviation", "# Infected Fleas", "% Fleas Infected")}
+  return(LocationOutput)
+}
+
+LocationOutput <- data.frame(unique(x$location))
+kbl(locspp(comparison.glom, "Bartonella"), caption = "Bartonella")%>%
+  kable_classic()%>%
+  kable_styling(full_width=F)
+```
+
+```{r}
+graphlocspp <- function(x, y){
+  for(i in 1:length(unique(x$location))){
+  locations <- unique(x$location)
+  b <- x %>% filter(location == locations[i])
+  col <- grep(paste0("\\b", y, "\\b"), colnames(x))
+  Range <- round(range(b[,col]), 2)
+  Range <- paste(Range[2])
+  Mean <- round(mean(b[,col]), 2)
+  Stand <- round(sd(b[,col]), 2)
+  Median <- round(median(b[,col]), 2)
+  Num <- as.numeric(length(which(b[,col] > 0)))
+  Percent <- round((Num/nrow(b))*100, 2)
+  LocationOutput[i,1] <- locations[i]
+  LocationOutput[i,2] <- Range
+  LocationOutput[i,3] <- Mean
+  LocationOutput[i,4] <- Percent
+  colnames(LocationOutput) <- c("Location", "Range", "Median", "% Fleas Infected")}
+  return(LocationOutput)
+}
+
+bart.locspp <- graphlocspp(comparison.glom, "Bartonella") #idea was to make a bar graph showing the range of read numbers on one y-axis and the percentage of fleas infected on the other
+colnames(bart.locspp) <- c("Location", "Range", "Median", "Percent")
+bart.locspp <- melt(bart.locspp, id = "Location")
+bart.locspp$value <- as.numeric(bart.locspp$value)
+ggplot(bart.locspp, aes(x = Location, y = value, fill = variable))+
+  geom_col(position = "dodge", stat = "identity")+
+  labs(title = "garbage I could one day do something with")
+```
+
+
+```{r}
+kbl(locspp(comparison.glom, "Rickettsia"), caption = "Rickettsia")%>%
+  kable_classic()%>%
+  kable_styling(full_width=F)
+```
+
+```{r}
+kbl(locspp(comparison.glom, "Wolbachia"), caption = "Wolbachia")%>%
+  kable_classic()%>%
+  kable_styling(full_width = F)
+``` 
+
+```{r}
+bartlocspp <- as.data.frame(locspp(comparison.glom, "Bartonella"))
+bartlocspp[,ncol(bartlocspp)+1] <- "Bartonella"
+colnames(bartlocspp) <- c(colnames(bartlocspp[,1:ncol(bartlocspp)-1]), "Genus")
+ricklocspp <- as.data.frame(locspp(comparison.glom, "Rickettsia"))
+ricklocspp[,ncol(ricklocspp)+1] <- "Rickettsia"
+colnames(ricklocspp) <- c(colnames(ricklocspp[,1:ncol(ricklocspp)-1]), "Genus")
+wolblocspp <- as.data.frame(locspp(comparison.glom, "Wolbachia"))
+wolblocspp[,ncol(wolblocspp)+1] <- "Wolbachia"
+colnames(wolblocspp) <- c(colnames(wolblocspp[,1:ncol(wolblocspp)-1]), "Genus")
+
+plotlist <- vector('list', length(genera))
+for(i in 1:length(genera)){
+    thisgenera <- genera[i]
+    columnof <- grep(paste0("\\b", thisgenera, "\\b"), colnames(comparison.glom))
+    plotlist[[i]] <- local({ 
+      p1 <- ggplot(comparison.glom, aes(x = location, y = comparison.glom[[columnof]]))+
+      geom_boxplot()+theme_char()+theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10))+
+        labs(y = thisgenera)+
+        ylim(0, 100000)+
+        scale_y_continuous(trans='log10',
+                     breaks=trans_breaks('log10', function(x) 10^x),
+                     labels=trans_format('log10', math_format(10^.x)), )
+    })
+}
+for(i in length(genera)){
+  assign(paste0(genera[i], "box"), plotlist[[i]])}
+
+```
+
+
+```{r}
+comp.glom.col <- colnames(comparison.glom)
+california <- comparison.glom %>% filter(location == "Davis, CA" | location == "San Francisco, CA")
+a <- spp(california[,48:53])
+northcarolina <- comparison.glom %>% filter(location == "Washington, NC" | location == "Gastonia, NC" | location == "Harnett, NC")
+b <- spp(northcarolina[,48:53])
+uk <- comparison.glom %>% filter(location == "London, UK")
+c <- spp(uk[,48:53])
+abc <- bind_rows(a, b, c)
+kbl(abc) %>% 
+  kable_classic() %>% 
+  kable_styling(full_width = F) %>% 
+  pack_rows("California", 1, 6) %>% pack_rows("North Carolina", 7, 12) %>% pack_rows("United Kingdom", 13, 18)
+```
+
+**Comparison to PCR Results**
+```{r}
+comparison.glom %>% 
+  gather("Genus", "Reads", c(Bartonella, Rickettsia)) %>% 
+  gather("Test", "Result", c(BartonellaPCR, RickettsiaPCR)) %>% 
+  dplyr::filter(Test=="BartonellaPCR"&Genus=="Bartonella"| Test=="RickettsiaPCR"&Genus=="Rickettsia") %>% 
+  ggplot(aes(x=Result, y=Reads, color=location)) +
+  geom_point(alpha = 0.5)+
+  geom_sina(alpha= 0.5)+
+    scale_x_discrete(labels=c("Negative", "Positive")) +
+    facet_wrap(~Genus, scales = "free_x") +
+    labs(y="NGS reads", x="PCR results", color = "Location of Origin", title = "Comparison of Bartonella and Rickettsia NGS and PCR results") +
+    theme_char() +
+    theme(legend.position = "bottom",
+          panel.grid.major.x = element_blank())
+
+```
+
+## Rickettsia 
+
+```{r}
+ricktf <- as.data.frame(tabyl(comparison.glom, location, RickTF))
+for(i in 2:3){
+ricktf[,i] <- as.numeric(ricktf[,i])}
+ricktf$total <- rowSums(ricktf[,2:3])
+ricktf$percentage <- 1
+for(i in 1:nrow(ricktf)){
+  ricktf[i,5] <- round((ricktf[i,3]/ricktf[i,4])*100, 2)}
+colnames(ricktf) <- c("Location", "Negative Fleas", "Positive Fleas", "Total Fleas", "Percentage Positive")
+kbl(ricktf, caption = "Rickettsia Results") %>% kable_classic() %>% kable_styling(full_width = F)
+chisq.test(ricktf[,2:3])
+```
+
+
+```{r}
+comparison.glom$RickettsiaPCR <- ifelse(comparison.glom$RickettsiaPCR == 0, "Negative", comparison.glom$RickettsiaPCR)
+comparison.glom$RickettsiaPCR <- ifelse(comparison.glom$RickettsiaPCR == 1, "Positive", comparison.glom$RickettsiaPCR)
+comparison.glom %>% filter(Rickettsia > 0) %>% 
+  ggplot(aes(x=ricktm, y=Rickettsia, color=RickettsiaPCR)) +
+    geom_point(alpha=0.5) +
+    labs(y="Number of NGS reads", x="PCR Tm", color = "R.felis Sequence") +
+    theme_char() +facet_wrap(~location, nrow = 2)+
+    theme(legend.position = "bottom",
+          panel.grid.major.x = element_blank())
+```
+
+```{r}
+melt.rick  <- comparison %>% dplyr::filter(Genus == "Rickettsia")
+melt.rick$rickspp <- gsub("^$", "Negative", melt.rick$rickspp)
+```
+```{r, fig.height = 6, fig.width = 10}
+rickorder <- sequencedata %>% filter(Genus == "Rickettsia")
+melt.rick$Species <- factor(melt.rick$Species, levels = rickorder$OTU)  
+melt.rick%>% 
+  gather("Genus", "Reads", c(Rickettsia)) %>% 
+  gather("Test", "Result", c(RickettsiaPCR)) %>% 
+  dplyr::filter(Test=="RickettsiaPCR"&Genus=="Rickettsia") %>% dplyr::filter(Abundance > 0) %>% 
+  ggplot(aes(y= Abundance, color= rickspp, x=flea.id)) +
+  geom_jitter(alpha = 0.5) +
+  facet_wrap(~Species, nrow = 4)+
+  labs(y="NGS reads", x="PCR results", color = "Rickettsia PCR", title = "Rickettsia ASVs") +
+  theme_char() +
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom")
+```
+
+```{r, fig.height = 13, fig.width = 8}
+rick.loc.melt <- melt.rick %>% filter(Abundance > 0)
+rick.loc.melt$location <- factor(rick.loc.melt$location, levels = c("San Francisco, CA", "Davis, CA", "Sulphur, LA", "Gastonia, NC", "Harnett, NC", "Washington, NC", "London, UK"))
+rick.loc.melt %>% 
+  ggplot(aes(y=Abundance, color= location, x=location)) +
+  geom_jitter(alpha = 0.7)+
+  facet_wrap(~Species, nrow = 8)+
+  labs(y="Number of NGS reads", x="", color = "Location") +
+  theme_char() + scale_color_jama()+guides(color = guide_legend(nrow = 2))+
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom", axis.ticks.x = element_blank())
+```
+
+```{r, fig.height = 6, fig.width = 8}
+melt.rick %>% filter(Species == "ASV4") %>% filter(Abundance > 0) %>% 
+  ggplot(aes(y=Abundance, color= location, x=location)) +
+  geom_sina(alpha = 0.5)+
+  labs(y="Proportion of NGS reads", x="Location", color = "Location")+
+  theme_char() + scale_color_jama()+facet_wrap(~Species)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+melt.rick %>% dplyr::filter(Abundance> 0) %>% 
+  dplyr::filter(rickspp == "R. felis") %>% 
+  ggplot(aes(y=Abundance, color= rickspp, x=flea.id)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~Species)+
+  labs(y="NGS reads", x="PCR results", title = "ASV of qPCR R. felis (+)") +
+  theme_char() 
+```
+
+```{r, fig.width = 10, fig.height = 4}
+sequencedata %>% dplyr::filter(Genus == "Rickettsia") %>% mutate(OTU = fct_reorder(OTU, plyr::desc(Abundance))) %>% 
+  ggplot(aes(x = OTU, y = Abundance, fill = OTU))+
+  geom_col(color = "Black")+
+  theme_char()+ labs(y = "Number of Reads", x = "")+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
+  geom_text(aes(label = Abundance), hjust = -0.10, angle = 90)+
+  scale_y_continuous(limits = c(0, 350000), breaks = seq(0, 300000, by = 50000))
+```
+
+```{r}
+comparison.glom %>% filter(Rickettsia > 0) %>% 
+  ggplot(aes(y = Rickettsia, x = location, color = location))+
+  geom_sina(alpha = 0.5)+ theme_char()+
+  labs(x = "Location", color = "Location")
+```
+
+```{r}
+rickseq <- ps.seq[rickorder$OTU] #get rickettsia sequences 
+rickref <- readDNAStringSet(here("flea_main", "rick_seq.fa"), format = "fasta") #rickettsia spp. reference strains 
+rickabc <- c(rickseq, rickref)
+ricknseq <- length(rickabc)-1
+ricka <- msa(rickabc, method = "ClustalW", type = "dna") #sequence alignment
+rickb <- as.DNAbin(ricka) 
+rickc <- as.matrix(rickb)
+rickd <- trimEnds(rickc, min.n.seq = ricknseq) #Trim sequences to same length
+ricktrim <- trimEnds(rickb, min.n.seq = ricknseq) #Trim sequences 
+ricke <- ape::dist.dna(rickd) 
+rickf <- ape::nj(rickd)
+rickf$tip.label <- labels(rickd)
+``` 
+
+```{r}
+rickh <- as.dna(rickd)
+rickhap <- haplotypes::haplotype(rickh)
+ricknhap <- length(rickhap@haplist)
+rickhap.seq <- data.frame(rickhap@sequence)
+haplotype.assign <- rickhap@haplist
+rickdist.mat.m <- rickhap@d
+rickvec <- paste0("H", 1:ricknhap)
+rownames(rickdist.mat.m) <- as.character(rickvec)
+colnames(rickdist.mat.m) <- as.character(rickvec)
+heatmap(rickdist.mat.m)
+
+```
+
+```{r}
+write.csv(rickdist.mat.m, here("flea_main", "Rickettsia", "distance_mat.csv"))
+write.csv(rickhap@sequence, here("flea_main", "Rickettsia", "sequences.csv"))
+```
+
+```{r, fig.height = 10, fig.width = 10}
+tip.labs <- c(paste0("H", 1:ricknhap))
+for(i in 1:ricknhap){
+  tip.labs[i] <- paste(unlist(gsub(" .*", "", haplotype.assign[i][[1]])), collapse = " ")
+}
+```
+
+
+```{r}
+rickhap.dna <- as.dna(rickhap)
+rickhap.bin <- haplotypes::as.DNAbin(rickhap.dna)
+rownames(rickhap.bin) <- tip.labs
+write.FASTA(rickhap.bin, here("flea_main", "Rickettsia", "sequences.fasta"))
+rickhap.mat <- as.matrix(rickhap.bin)
+rickhapdist <- dist.dna(rickhap.mat)
+rickhapnj <- nj(rickhapdist)
+rickhapnj$edge.length <- ifelse(rickhapnj$edge.length < 0, 0, rickhapnj$edge.length)
+rickhapnj$tip.label <- tip.labs
+ggtree(rickhapnj, aes(), branch.length = 'branch.length')+
+  geom_tiplab(size = 3)+
+  geom_treescale()+ggplot2::xlim(-0.01, 0.10)
+ggsave(plot = last_plot(), here("flea_main", "Rickettsia", "rick_tree.png"), height = 10, width = 10)
+ape::write.tree(rickhapnj, file = here("flea_main", "Rickettsia","ricknewwick.txt"))
+```
+
+
+
+```{r, fig.width = 11.2, fig.height = 6}
+rickorder <- sequencedata %>% filter(Genus == "Rickettsia")
+otutab <- as.data.frame(otu_table(psdecon))
+rickotu <- otutab %>% select(rickorder$OTU)
+rickotu <- as.data.frame(ifelse(rickotu > 0, 1, 0))
+rickasv.totals <- data.frame(newname = c(paste0(colnames(rickotu), " (", colSums(rickotu), ")")), ASV = colnames(rickotu))
+order.rick.n <- rickasv.totals$newname
+rickasvs <- colnames(rickotu)
+combos <- {combn(colnames(rickotu), m = 2)} %>% t() %>% as.data.frame()
+combos2 <- data.frame(V1 = combos$V2, V2 = combos$V1)
+combos <- bind_rows(combos, combos2)
+
+for(i in 1:nrow(combos)){
+n <- sum(select(rickotu, combos[i,1]) == 1 & select(rickotu, combos[i,2]) == 1)
+combos[i,3] <- n}
+
+combos3 <- data.frame(V1 = rickasvs, V2 = rickasvs, V3 = 0)
+combos <- bind_rows(combos, combos3)
+colnames(combos) <- c("ASV", "ASV1", "V3")
+combos <- left_join(combos, rickasv.totals, by = "ASV")
+colnames(combos) <- c("trash", "ASV", "V3", "ASV1")
+combos <- left_join(combos, rickasv.totals, by = "ASV")
+colnames(combos) <- c("trash", "trash1", "V3", "ASV1", "ASV2")
+
+combos[combos == 0] <- NA
+combos$ASV1 <- factor(combos$ASV1, levels = order.rick.n)
+combos$ASV2 <- factor(combos$ASV2, levels = order.rick.n)
+
+combos$V3 <- ifelse(combos$V3 == 0, NA, combos$V3)
+combos %>% 
+  ggplot(aes(x = ASV1, y = ASV2, fill = V3))+
+    geom_tile(color = "black")+theme_char()+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 10), axis.text.y = element_text(size = 9), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    scale_fill_gradient(low = "white", high = "Blue", na.value = "grey")+
+  labs(x = "", y = "", fill = "Fleas")
+```
+
+
+```{r, fig.height = 4, fig.width = 8}
+hap.bin <- haplotypes::as.DNAbin(rickhap.dna[colnames(rickotu)])
+xlabel <- unlist(ape::seg.sites(hap.bin))
+ape::image.DNAbin(hap.bin[,ape::seg.sites(hap.bin)], col = c("#3581D8", "#D82E3F", "#FFE135", "#28CC2D"), xaxt = "n", xlab = "Base Pair", cex = 0.8)
+axis(1, labels = c(ape::seg.sites(hap.bin)), at = 1:length(ape::seg.sites(hap.bin)), las = 2, cex.axis = 0.5)
+```
+
+```{r, fig.width = 12}
+otutab <- as.data.frame(otu_table(psdecon))
+rickot <- otutab %>% select(rickorder$OTU)
+rickot$co <- apply(rickot, 1, function(x) length(which(x > 0)))
+allrick <- rickot
+rickot <- rickot %>% filter(co > 1)
+ncoinfectrick <- nrow(rickot)
+rickot$flea.id <- rownames(rickot)
+rickot <- full_join(rickot, flea.info, by = "flea.id")
+meltrickot <- melt(rickot)
+meltrickot$keep <- ifelse(meltrickot$variable %in% rickorder$OTU, "Keep", "Remove")
+meltrickot <- meltrickot %>% filter(keep == "Keep") %>% filter(value > 0)
+ggplot(meltrickot, aes(x = reorder(flea.id, location), y = value, color = variable))+
+  geom_point(alpha = 0.7) + theme_char() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(y = "Number of Reads", color = "ASV", x = "Flea ID")
+ggplot(meltrickot, aes(x = reorder(flea.id, location), y = value, color = variable))+
+  geom_point(alpha = 0.7) + theme_char() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+ylim(0, 2000)+
+  labs(y = "Number of Reads", color = "ASV", x = "Flea ID")
+```
+
+
+```{r, fig.width = 2.2, fig.height = 2}
+allrick$flea.id <- rownames(allrick)
+ricktitle <- expression(paste("Number of Unique ", italic("Rickettsia"), " ASVs"))
+allrick <- full_join(allrick, flea.info, by = "flea.id")
+ggplot(allrick, aes(x = co, y = ..count..)) +
+  geom_bar(color = "black")+
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5)+ylim(0, 110)+
+  labs(x = ricktitle, y = "Number of Fleas")+
+  scale_x_continuous(breaks = c(0:6))+
+  theme_char()
+kbl(tabyl(allrick, co)) %>% 
+  kable_classic() %>% 
+  kable_styling(full_width = F)
+```
+
+```{r, fig.width = 11}
+allrick$rickspp <- gsub("^$", "Negative", allrick$rickspp)
+ggplot(allrick, aes(x = co, fill = ompaspp))+
+  geom_bar(color = "black")+
+  facet_wrap(~location, nrow = 2)+
+  theme_char()+scale_fill_manual(values = c("pink", "grey", "white", "black"))+
+  labs(fill = "Rickettsia qPCR", y = "Number of Fleas", x = "Number of Rickettsia ASVs")+
+  theme(legend.position = "bottom")+
+  geom_text(aes(label = ..count..), stat = "count", position = position_stack(), vjust = -0.35)
+```
+
+```{r, fig.width = 10, fig.height = 6}
+ricktokeep <- as.data.frame(tabyl(meltrickot, variable))
+ricktokeep <- ricktokeep %>% filter(n > 1)
+melt.rick$Rickettsia <- ifelse(melt.rick$Abundance > 0, "Positive", "Negative")
+melt.rick %>% filter(Species =="ASV4") %>% filter(Abundance > 0) %>% 
+  ggplot(aes(fill = location, x = ompaspp))+
+  geom_bar(color = "black")+theme_char()
+melt.rick %>% filter(Abundance > 0) %>% filter(Species != "ASV4") %>% 
+  ggplot(aes(fill = ompaspp, x = Species))+
+  geom_bar(color = "black")+
+  facet_wrap(~location, scales = "free_x")+
+  theme_char()+scale_fill_jama()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 8))
+melt.rick %>% filter(Abundance > 0) %>% filter(Species != "ASV4") %>% 
+  ggplot(aes(fill = location, x = Species))+
+  geom_bar(color = "black")+
+  theme_char()+facet_wrap(~ompaspp, nrow = 6)+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+flea.info$rickspp <- gsub("Dirty ", "Dirty", flea.info$rickspp)
+dirty.flea <- flea.info %>% filter(rickspp == "Dirty")
+rickotuloc <- rickotu
+rickotuloc$flea.id <- rownames(rickotuloc) 
+rickotuloc <- left_join(dirty.flea, rickotuloc, by = "flea.id")
+
+clean.flea <- flea.info %>% filter(rickspp != "Dirty")
+rickotuloc1 <- rickotu
+rickotuloc1$flea.id <- rownames(rickotuloc1) 
+rickotuloc1 <- left_join(clean.flea, rickotuloc1, by = "flea.id")
+
+df.aball <- data.frame(1, "filterout")
+colnames(df.aball) <- c("Reads", "ASV")
+for(i in 1:nrow(rickorder)){
+  xall <- data.frame(rickotu[,i])
+  xall$ASV <- colnames(rickotu)[i]
+  colnames(xall) <- c("Reads", "ASV")
+  df.aball <- bind_rows(df.aball, xall)}
+df.aball <- df.aball %>% filter(ASV != "filterout")
+df.aball$Reads <- ifelse(df.aball$Reads > 0, "Positive", "Negative")
+df.ab1all <- count(df.aball, ASV, Reads)
+df.ab1all$type <- "All Fleas" 
+
+df.ab <- data.frame(1, "filterout")
+colnames(df.ab) <- c("Reads", "ASV")
+for(i in 1:nrow(rickorder)-1){
+  x <- data.frame(rickotuloc[,48+i], rep(colnames(rickotuloc)[48+i], nrow(rickotuloc)))
+  colnames(x) <- c("Reads", "ASV")
+  df.ab <- bind_rows(df.ab, x)}
+df.ab <- df.ab %>% filter(ASV != "filterout")
+df.ab$Reads <- ifelse(df.ab$Reads > 0, "Positive", "Negative")
+df.ab1 <- count(df.ab, ASV, Reads)
+df.ab1$type <- "Dirty"
+df.ab1 <- bind_rows(df.ab1, df.ab1all)
+df.ab1 <- df.ab1 %>% filter(Reads != "Negative")
+
+ggplot(df.ab1, aes(x = ASV, y = n, fill = type))+
+  geom_col(position = "dodge")+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+
+## Bartonella 
+
+```{r}
+barttf <- as.data.frame(tabyl(comparison.glom, location, BartTF))
+for(i in 2:3){
+barttf[,i] <- as.numeric(barttf[,i])}
+barttf$total <- rowSums(barttf[,2:3])
+barttf$percentage <- 1
+for(i in 1:nrow(barttf)){
+  barttf[i,5] <- round((barttf[i,3]/barttf[i,4])*100, 2)}
+colnames(barttf) <- c("Location", "Negative Fleas", "Positive Fleas", "Total Fleas", "Percentage Positive")
+kbl(barttf, caption = "Bartonella Results") %>% kable_classic() %>% kable_styling(full_width = F)
+chisq.test(barttf[,2:3])
+```
+
+
+```{r}
+bart.melt <- comparison.glom %>% dplyr::filter(Bartonella > 0)
+bartorder <- sequencedata %>% filter(Genus == "Bartonella")
+```
+
+```{r, fig.width = 10, fig.height = 6}
+bart.melt <- comparison %>% filter(Genus == "Bartonella")
+bart.melt$Species <- factor(bart.melt$Species, levels = bartorder$Species)
+bart.melt$bartspp <- gsub("^$", "Negative", bart.melt$bartspp)
+bart.order.fac <- c("clarridgeiae", "ASV257", "ASV2745", "ASV4372", "ASV4432", "ASV6630", "ASV6997", "ASV7021","ASV7851", "ASV9525", "ASV10069", "ASV55", "ASV4296", "ASV8867", "ASV10434", "ASV9207")
+bart.melt$Species <- factor(bart.melt$Species, levels = bart.order.fac)
+bart.melt %>% filter(Abundance > 0) %>% 
+  ggplot(aes(y=Abundance, color= bartspp, x=bartspp)) +
+  geom_jitter(alpha = 0.5)+
+  facet_wrap(~Species, nrow = 3)+
+  labs(y="Number of NGS reads", x="", color = "Bartonella spp. by qPCR") +
+  theme_char() + scale_color_jama()+guides(color = guide_legend())+
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom")
+  ggsave(here("flea_main", "Image", "bartsppasv.png"), height = 5, width = 9, plot = last_plot())
+```
+
+```{r, fig.height = 5, fig.width = 9}
+bart.temp <- bart.melt
+bart.order.fac.asv <- c("ASV9", "ASV257", "ASV2745", "ASV4372", "ASV4432", "ASV6630", "ASV6997", "ASV7021","ASV7851", "ASV9525", "ASV10069", "ASV55", "ASV4296", "ASV8867", "ASV9207", "ASV10434")
+bart.temp$Species <- factor(bart.temp$Species, levels = bart.order.fac)
+bart.temp$location <- factor(bart.temp$location, levels = c("San Francisco, CA", "Davis, CA", "Sulphur, LA", "Gastonia, NC", "Harnett, NC", "Washington, NC", "London, UK"))
+bart.temp %>% dplyr::filter(Abundance > 0) %>% 
+  ggplot(aes(y=Abundance, x=location, color = location)) +
+  geom_jitter(alpha = 0.5)+
+  facet_wrap(~Species, nrow = 3)+
+  labs(y="Number of NGS reads", color = "") +
+  theme_char() + scale_color_jama()+guides(color = guide_legend(nrow = 1))+
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom", axis.title.x = element_blank(), axis.ticks.x = element_blank(), legend.text = element_text(size = 10))
+  ggsave(here("flea_main", "Image", "bartlocasv.png"), height = 5, width = 9, plot = last_plot())
+```
+
+```{r}
+comparison.prop %>% filter(Bartonella > 0) %>% 
+  ggplot(aes(y = Bartonella, x = quant_reading))+
+  geom_point(alpha = 0.5)+ theme_char()+ geom_smooth(method = "lm", color = "Black")+
+  labs(x = "DNA Concentration After PCR", y = "Proportion of NGS Reads Identified as Bartonella", title = "Comparison of Bartonella NGS Reads and DNA Concentration")
+```
+```{r}
+t.test(comparison.prop$quant_reading, comparison.prop$Bartonella)
+```
+
+```{r, fig.width = 15, fig.height = 5.5}
+sequencedata1 <- dplyr::full_join(seqtab, sequences, by = "OTU")
+sequencedata1 <- dplyr::left_join(sequencedata1, ASVsum, by = "OTU") 
+sequencedata1 <- sequencedata1 %>% dplyr::filter(Abundance > 0)
+sequencedata1 <- sequencedata1 %>% dplyr::filter(Genus == "Bartonella")
+sequencedata1$OTU <- factor(sequencedata1$OTU, levels = bart.order.fac.asv)
+sequencedata1 %>% 
+  ggplot(aes(x = OTU, y = Abundance, fill = OTU))+
+  geom_col(color = "Black")+
+  theme_char()+ labs(y = "Number of Reads", x = "")+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1, size = 15),
+        axis.text.y = element_text(size = 15), axis.title.y = element_text(size = 15))+
+  geom_text(aes(label = Abundance), angle = 90, hjust = -0.2, size = 5.5)+
+  scale_y_continuous(limits = c(0, 350000), breaks = seq(0, 350000, by = 25000))
+
+sequencedata1 %>% 
+  ggplot(aes(x = OTU, y = Abundance, fill = OTU))+
+  geom_col(color = "Black")+
+  theme_char()+ labs(y = "Number of Reads", x = "")+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1))+
+  geom_text(aes(label = Abundance), vjust = -0.5)+
+  ylim(0, 100000)
+
+```
+
+```{r}
+bartseq <- ps.seq[bartorder$OTU] #get bartonella sequences 
+bartref <- readDNAStringSet(here("flea_main", "bart_seq.fa"), format = "fasta") #bartonella spp. reference strains 
+ecoli <- readDNAStringSet(here("flea_main", "E_coli[NR_024570.1].fasta"), format = "fasta") #get E. coli ref
+bartabc <- c(bartseq, bartref, ecoli)
+bartnseq <- length(bartabc)-1
+barta <- msa(bartabc, method = "ClustalW", type = "dna") #sequence alignment
+bartb <- as.DNAbin(barta) 
+bartc <- as.matrix(bartb)
+bartd <- trimEnds(bartc, min.n.seq = bartnseq) #Trim sequences to same length
+barttrim <- trimEnds(bartb, min.n.seq = bartnseq) #Trim sequences 
+barte <- ape::dist.dna(bartd) 
+bartf <- ape::nj(bartd)
+bartf$tip.label <- labels(bartd)
+``` 
+
+```{r}
+barth <- as.dna(bartd)
+barthap <- haplotypes::haplotype(barth)
+bartnhap <- length(barthap@haplist)
+barthap.seq <- data.frame(barthap@sequence)
+haplotype.assign <- barthap@haplist
+bartdist.mat.m <- barthap@d
+bartvec <- paste0("H", 1:bartnhap)
+rownames(bartdist.mat.m) <- as.character(bartvec)
+colnames(bartdist.mat.m) <- as.character(bartvec)
+heatmap(bartdist.mat.m)
+```
+5
+```{r}
+write.csv(bartdist.mat.m, here("flea_main", "Bartonella", "distance_mat.csv"))
+```
+
+```{r, fig.height = 10, fig.width = 10}
+tip.labs <- c(paste0("H", 1:bartnhap))
+for(i in 1:bartnhap){
+  tip.labs[i] <- paste(unlist(gsub(" .*", "", haplotype.assign[i][[1]])), collapse = ", ")
+}
+```
+
+
+```{r}
+barthap.dna <- as.dna(barthap)
+barthap.bin <- haplotypes::as.DNAbin(barthap.dna)
+barthap.mat <- as.matrix(barthap.bin)
+barthapdist <- dist.dna(barthap.mat)
+barthapnj <- nj(barthapdist)
+barthapnj$tip.label <- tip.labs
+barthapnj$edge.length <- ifelse(barthapnj$edge.length < 0, 0, barthapnj$edge.length)
+ggtree(barthapnj, aes(), branch.length = 'branch.length')+
+  geom_tiplab(size = 3)+
+  geom_treescale()+ggplot2::xlim(-0.02, 0.10)
+ggsave(plot = last_plot(), here("flea_main", "Bartonella", "bart_tree.png"), height = 10, width = 10)
+ape::write.tree(barthapnj, file = here("flea_main", "Bartonella","bartnewwick.txt"))
+
+```
+
+```{r}
+otutab <- as.data.frame(otu_table(psdecon))
+bartotutab <- otutab %>% select(bartorder$OTU)
+bartotutab$Sum <- rowSums(bartotutab)
+bartotutabpos <- bartotutab %>% filter(Sum > 0)
+kbl(bartotutabpos) %>% 
+  kable_classic %>% 
+  kable_styling(full_width = F)
+```
+
+```{r}
+bartorder <- sequencedata1
+bartotu <- otutab %>% select(bartorder$OTU)
+bartotu <- as.data.frame(ifelse(bartotu > 0, 1, 0))
+
+bartasv.totals <- data.frame(newname = c(paste0(colnames(bartotu), " (", colSums(bartotu), ")")), ASV = colnames(bartotu))
+bartasv.totals$ASV <- factor(bartasv.totals$ASV, levels = bart.order.fac.asv)
+bartasv.totals <- bartasv.totals[order(bartasv.totals$ASV),]
+order.bart.n <- bartasv.totals$newname
+bartasvs <- colnames(bartotu)
+combos <- {combn(colnames(bartotu), m = 2)} %>% t() %>% as.data.frame()
+combos2 <- data.frame(V1 = combos$V2, V2 = combos$V1)
+combos <- bind_rows(combos, combos2)
+
+for(i in 1:nrow(combos)){
+n <- sum(select(bartotu, combos[i,1]) == 1 & select(bartotu, combos[i,2]) == 1)
+combos[i,3] <- n}
+
+combos3 <- data.frame(V1 = bartasvs, V2 = bartasvs, V3 = 0)
+combos <- bind_rows(combos, combos3)
+colnames(combos) <- c("ASV", "ASV1", "V3")
+
+combos <- left_join(combos, bartasv.totals, by = "ASV")
+colnames(combos) <- c("trash", "ASV", "V3", "ASV1")
+combos <- left_join(combos, bartasv.totals, by = "ASV")
+colnames(combos) <- c("trash", "trash1", "V3", "ASV1", "ASV2")
+combos$ASV1 <- factor(combos$ASV1, levels = order.bart.n)
+combos$ASV2 <- factor(combos$ASV2, levels = order.bart.n)
+
+combos$V3 <- ifelse(combos$V3 == 0, NA, combos$V3)
+combos  %>% 
+  ggplot(aes(x = ASV1, y = ASV2, fill = V3))+
+    geom_tile(color = "black")+theme_char()+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    scale_fill_gradient(low = "white", high = "blue", na.value = "grey")+
+  theme(axis.title = element_blank(), legend.title = element_text(size = 11))+
+  labs(fill = "Fleas")
+ggsave(here("flea_main", "Image", "bartheatmap.png"), plot = last_plot(), height = 5, width = 7)
+```
+
+```{r}
+otutab <- as.data.frame(otu_table(psdecon))
+bartotutab <- otutab %>% select(bartorder$OTU)
+bartotutab$Sum <- rowSums(bartotutab)
+bartotutabpos <- bartotutab %>% filter(Sum > 0)
+bartotutabpos$flea.id <- rownames(bartotutabpos)
+bartotutab$flea.id <- rownames(bartotutab)
+bartotutabpos <- full_join(bartotutabpos, flea.info, by = "flea.id")
+bartotutabpos <- subset(bartotutabpos, select = -c(Sample_or_Control, conrick, conrickspp, fompAct, fompAtm, fompA, fompAspp, mycoct, myctotm, myco, mycospp))
+meltbartotu <- melt(bartotutabpos)
+meltbartotu$keep <- ifelse(meltbartotu$variable %in% bartorder$OTU, "Keep", "Remove")
+meltbartotu <- meltbartotu %>% filter(keep != "Remove")
+bartasvsums <- subset(bartotutab, select = c(flea.id, Sum))
+meltbartotu <- left_join(meltbartotu, bartasvsums, by = "flea.id")
+meltbartotu %>% filter(Sum > 1000) %>% filter(value > 0) %>% 
+  ggplot(aes(x = flea.id, y = value, color = variable)) +
+  geom_point(alpha = 0.8)+theme_char()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  scale_color_igv()
+```
+
+```{r}
+meltbartotu %>% filter(value > 0) %>% filter(Sum < 1000) %>% 
+  ggplot(aes(x = reorder(flea.id, location), y = value, color = variable)) +
+  geom_point(alpha = 0.7)+theme_char()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 8))+
+  scale_color_igv()
+```
+
+```{r}
+bartot <- otutab %>% select(bartorder$OTU)
+bartot$co <- apply(bartot, 1, function(x) length(which(x > 0)))
+allbart <- bartot
+bartot1 <- bartot %>%  filter(co > 0)
+avbart <- round(mean(bartot1$co), 2)
+bartot <- bartot %>% filter(co > 1)
+ncoinfectbart <- nrow(bartot)
+bartot$flea.id <- rownames(bartot)
+bartot <- full_join(bartot, flea.info, by = "flea.id")
+meltbartot <- melt(bartot)
+meltbartot$keep <- ifelse(meltbartot$variable %in% bartorder$OTU, "Keep", "Remove")
+meltbartot <- meltbartot %>% filter(keep == "Keep") %>% filter(value > 0)
+ggplot(meltbartot, aes(x = reorder(flea.id, location), y = value, color = variable))+
+  geom_point(alpha = 0.7) + theme_char() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(y = "Number of Reads", color = "ASV", x = "Flea ID")
+ggplot(meltbartot, aes(x = reorder(flea.id, location), y = value, color = variable))+
+  geom_point(alpha = 0.7) + theme_char() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+ylim(0, 5000)+
+  labs(y = "Number of Reads", color = "ASV", x = "Flea ID")
+```
+
+
+Average # of ASVs with a flea with 1 or more Bartonella ASVs `r avbart`
+
+```{r, fig.width = 2.2, fig.height = 2}
+allbart$flea.id <- rownames(allbart)
+barttitle <- expression(paste("Number of Unique ", italic("Bartonella"), " ASVs"))
+ggplot(allbart, aes(x = co, y = ..count..)) +
+  geom_bar(color = "black")+
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5)+
+  scale_fill_jama()+
+  labs(x = barttitle, y = "Number of Fleas", fill = "Location")+
+  theme_char()+
+  guides(fill = guide_legend(nrow = 1))+
+  theme(legend.position = "bottom")+ylim(0, 110)
+kbl(tabyl(allbart, co)) %>% 
+  kable_classic() %>% 
+  kable_styling(full_width = F)
+```
+
+```{r}
+bartsens <- comparison.glom 
+bartsens$anybart <- ifelse(bartsens$BartTF == 1, 1, 0)
+bartsens$anybart <- ifelse(bartsens$BartonellaPCR == 1, 1, bartsens$anybart)
+bartbox <- bartsens %>% group_by(location) %>% count(BartTF, BartonellaPCR)
+bartbox$BartTF <- ifelse(bartbox$BartTF == 1, "Positive", "Negative")
+bartbox$BartonellaPCR <- ifelse(bartbox$BartonellaPCR == 1, "Positive", "Negative")
+ggplot(bartbox, aes(x = BartonellaPCR, fill = BartTF, y = n))+
+  geom_col()+
+  facet_wrap(~location)+
+  geom_text(aes(label = n), position = "stack")
+```
+
+```{r, fig.width = 9, fig.height = 3.85}
+loc.sens <- function(x){
+  for(i in 1:length(unique(x$location))){
+  locations <- unique(x$location)
+  locationinterest <- locations[i]
+  interest <- x %>% filter(location == locationinterest)
+  totalpos <- interest %>% filter(BartTF == "Positive" | BartonellaPCR == "Positive") %>% summarize(sum(n))
+  truepos <- interest %>% filter(BartTF == "Positive" & BartonellaPCR == "Positive") %>% summarize(sum(n))
+  falseneg <- interest %>% filter(BartTF == "Negative" & BartonellaPCR == "Positive") %>% summarize(sum(n)) 
+  trueneg <- interest %>% filter(BartTF == "Negative" & BartonellaPCR == "Negative") %>% summarize(sum(n)) 
+  falsepos <- interest %>% filter(BartTF == "Positive" & BartonellaPCR == "Negative") %>% summarize(sum(n)) 
+  ngssens <- round((truepos[1,1]/(truepos[1,1]+falseneg[1,1]))*100, 1)
+  ngsspec <- round((trueneg[1,1]/(falsepos[1,1]+trueneg[1,1]))*100, 1)
+  output[i,1] <- locationinterest
+  output[i,2] <- ngssens
+  output[i,3] <- ngsspec
+  }
+  output <- output %>% replace(is.na(.), 0.0)}
+output <- data.frame(Location = 1, Sensitivity = 1, Specificity = 1)
+bartbox <- bartsens  %>%  group_by(location) %>% count(BartTF, BartonellaPCR) %>% ungroup() %>% complete(location, nesting(BartonellaPCR, BartTF))
+bartbox$n <- replace_na(bartbox$n, 0)
+bartbox$BartTF <- ifelse(bartbox$BartTF == 1, "Positive", "Negative")
+bartbox$BartonellaPCR <- ifelse(bartbox$BartonellaPCR == 1, "Positive", "Negative")
+output <- loc.sens(bartbox)
+sens.data <- data.frame(c(output$Location, output$Location), c(output$Sensitivity, output$Specificity), c(rep("Sensitivity", nrow(output)), rep("Specificity", nrow(output))))
+colnames(sens.data) <- c("Location", "value", "Method")
+sens.data$Location <- factor(sens.data$Location, levels = c("London, UK", "Sulphur, LA", "Washington, NC", "Davis, CA", "Harnett, NC", "Gastonia, NC", "San Francisco, CA"))
+ggplot(sens.data, aes(x = Location, y = value, fill = Method))+
+  geom_col(color = "black", position = "dodge")+theme_char()+
+  scale_y_continuous(labels = function(b){paste0(round(b,0), "%")}, limits = c(0, 105))+
+  labs(y = "Percentage")+
+  geom_text(aes(label = paste0(value, "%")), position = position_dodge(width = 1), vjust = -0.5, size = 3.9)+
+  scale_fill_npg()+
+  theme(axis.text.x = element_text(size = 10), legend.position = "bottom")
+ggsave(filename = here("flea_main","Image", "sens_specificity.png"), height = 3.7, width = 8)
+```
+
+```{r}
+tabyl(comparison.glom, BartTF, BartonellaPCR)
+```
+
+
+## Wolbachia
+
+```{r}
+wolbtf <- as.data.frame(tabyl(comparison.glom, location, WolbTF))
+for(i in 2:3){
+wolbtf[,i] <- as.numeric(wolbtf[,i])}
+wolbtf$total <- rowSums(wolbtf[,2:3])
+wolbtf$percentage <- 1
+for(i in 1:nrow(wolbtf)){
+  wolbtf[i,5] <- round((wolbtf[i,3]/wolbtf[i,4])*100, 2)}
+colnames(wolbtf) <- c("Location", "Negative Fleas", "Positive Fleas", "Total Fleas", "Percentage Positive")
+kbl(wolbtf, caption = "Wolbachia Results") %>% kable_classic() %>% kable_styling(full_width = F)
+chisq.test(wolbtf[,2:3])
+```
+
+```{r}
+sequences <- as.data.frame(refseq(psdecon))
+sequences$OTU <- rownames(sequences)
+seqtab <- as.data.frame(tax_table(psdecon))
+seqtab$OTU <- rownames(seqtab)
+sequencedata <- dplyr::full_join(seqtab, sequences, by = "OTU")
+sequencedata <- sequencedata %>% dplyr::filter(Genus == "Wolbachia"| Genus == "Rickettsia" | Genus == "Bartonella" | Genus == "Achromobacter" | Genus == "Peptoniphilus" | Genus == "Rhodococcus")
+ASVsum <- psdecon %>% psmelt %>% dplyr::group_by(OTU) %>% dplyr::summarise_at(vars(Abundance), list(Abundance = sum))
+sequencedata <- dplyr::left_join(sequencedata, ASVsum, by = "OTU") 
+sequencedata <- sequencedata %>% dplyr::filter(Abundance > 0)
+```
+
+
+```{r, fig.height = 11, fig.width = 9}
+wol.melt <- ps.decon.melt %>% filter(Genus == "Wolbachia")
+wolorder <- sequencedata %>% filter(Genus == "Wolbachia")
+wol.melt$Species <- factor(wol.melt$Species, levels = wolorder$Species)
+wol.melt$location <- factor(wol.melt$location, levels = c("San Francisco, CA", "Davis, CA", "Sulphur, LA", "Gastonia, NC", "Harnett, NC", "Washington, NC", "London, UK"))
+wol.melt %>% dplyr::filter(Abundance > 0) %>% 
+  ggplot(aes(y=Abundance, x=location, color = location)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~Species, nrow = 9)+
+  labs(y="Number of NGS reads", x="", color = "Location") +
+  theme_char() + scale_color_jama()+guides(color = guide_legend(nrow = 1))+
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom", axis.ticks.x = element_blank())
+ggsave(plot = last_plot(), here("flea_main", "Image", "wollocasv.png"), height = 7.5, width = 13.33)
+```
+
+
+```{r, fig.width = 15, fig.height = 6}
+sequencedata %>% dplyr::filter(Genus == "Wolbachia") %>% mutate(OTU = fct_reorder(OTU, plyr::desc(Abundance))) %>% 
+  ggplot(aes(x = OTU, y = Abundance, fill = OTU))+
+  geom_col(color = "Black")+
+  theme_char()+ labs(y = "Number of Reads", x = "")+
+  theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1, size = 15),
+        axis.text.y = element_text(size = 15), axis.title.y = element_text(size = 15))+
+  geom_text(aes(label = Abundance), angle = 90, hjust = -0.2, size = 5.5)+
+  scale_y_continuous(limits = c(0, 350000), breaks = seq(0, 350000, by = 25000))
+
+```
+
+```{r, fig.width = 14, fig.height = 8}
+wolborder <- sequencedata %>% filter(Genus == "Wolbachia")
+wolbotu <- otutab %>% select(wolborder$OTU)
+wolbotu <- as.data.frame(ifelse(wolbotu > 0, 1, 0))
+order.wolb.asv <- wolborder$Species
+wolbasv.totals <- data.frame(newname = c(paste0(colnames(wolbotu), " (", colSums(wolbotu), ")")), ASV = colnames(wolbotu))
+wolbasv.totals$ASV <- factor(wolbasv.totals$ASV, levels = order.wolb.asv)
+wolbasv.totals <- wolbasv.totals[order(wolbasv.totals$ASV),]
+order.wolb.n <- wolbasv.totals$newname
+wolbasvs <- colnames(wolbotu)
+combos <- {combn(colnames(wolbotu), m = 2)} %>% t() %>% as.data.frame()
+combos2 <- data.frame(V1 = combos$V2, V2 = combos$V1)
+combos <- bind_rows(combos, combos2)
+
+for(i in 1:nrow(combos)){
+n <- sum(select(wolbotu, combos[i,1]) == 1 & select(wolbotu, combos[i,2]) == 1)
+combos[i,3] <- n}
+
+combos3 <- data.frame(V1 = wolbasvs, V2 = wolbasvs, V3 = 0)
+combos <- bind_rows(combos, combos3)
+colnames(combos) <- c("ASV", "ASV1", "V3")
+
+combos <- left_join(combos, wolbasv.totals, by = "ASV")
+colnames(combos) <- c("trash", "ASV", "V3", "ASV1")
+combos <- left_join(combos, wolbasv.totals, by = "ASV")
+colnames(combos) <- c("trash", "trash1", "V3", "ASV1", "ASV2")
+combos$ASV1 <- factor(combos$ASV1, levels = order.wolb.n)
+combos$ASV2 <- factor(combos$ASV2, levels = order.wolb.n)
+
+combos$V3 <- ifelse(combos$V3 == 0, NA, combos$V3)
+combos  %>% 
+  ggplot(aes(x = ASV1, y = ASV2, fill = V3))+
+    geom_tile(color = "black")+theme_char()+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 14), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.text.y = element_text(size = 9))+
+    scale_fill_gradient(low = "white", high = "blue", na.value = "grey")+
+  theme(axis.title = element_blank(), legend.title = element_text(size = 12))+
+  labs(fill = "Fleas")
+ggsave(here("flea_main", "Image", "wolbheatmap.png"), plot = last_plot(), height = 5, width = 7)
+```
+
+```{r}
+comparison.prop %>% filter(Wolbachia > 0) %>% 
+  ggplot(aes(y = Wolbachia, x = quant_reading, color = location))+
+  geom_point(alpha = 0.5)+ theme_char()+
+  labs(x = "DNA Concentration After PCR", y = "Proportion of NGS Reads Identified as Wolbachia", color = "Location")
+```
+
+```{r}
+otutab <- as.data.frame(otu_table(psdecon))
+wolbotutab <- otutab %>% select(wolorder$OTU)
+wolbotutab$Sum <- rowSums(wolbotutab)
+wolbotutabpos <- wolbotutab %>% filter(Sum > 0)
+kbl(wolbotutabpos) %>% 
+  kable_classic %>% 
+  kable_styling(full_width = F)
+```
+
+```{r, fig.width = 2.2, fig.height = 2}
+allwolb <- wolbotutab %>% select(-Sum)
+allwolb$co <- apply(allwolb, 1, function(x) length(which(x > 0)))
+allwolb$flea.id <- rownames(allwolb)
+allwolbrow <- full_join(allwolb, flea.info, by = "flea.id")
+wolbtitle <- expression(paste("Number of Unique ", italic("Wolbachia"), " ASVs"))
+ggplot(allwolbrow, aes(x = co, y = ..count..)) +
+  geom_bar(color = "black")+
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.35)+
+  scale_fill_jama()+ylim(0, 90)+ylim(0, 110)+
+  labs(x = wolbtitle, y = "Number of Fleas", fill = "Location")+
+  theme_char()+
+  guides(fill = guide_legend(nrow = 1))+
+  theme(legend.position = "bottom")+
+  scale_x_discrete(limits = c(0:7))
+```
+
+```{r, fig.width = 12}
+wolbot <- otutab %>% select(wolorder$OTU)
+wolbot$co <- apply(wolbot, 1, function(x) length(which(x > 0)))
+wolbot1 <- wolbot %>% filter(co > 0)
+avwol <- round(mean(wolbot1$co), 2)
+wolbot <- wolbot %>% filter(co > 1)
+ncoinfectwolb <- nrow(wolbot)
+wolbot$flea.id <- rownames(wolbot)
+wolbot <- full_join(wolbot, flea.info, by = "flea.id")
+meltwolbot <- melt(wolbot)
+meltwolbot$keep <- ifelse(meltwolbot$variable %in% wolorder$OTU, "Keep", "Remove")
+meltwolbot <- meltwolbot %>% filter(keep == "Keep") %>% filter(value > 0)
+ggplot(meltwolbot, aes(x = reorder(flea.id, location), y = value, color = variable))+
+  geom_point(alpha = 0.7) + theme_char() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+
+  labs(y = "Number of Reads", color = "ASV", x = "Flea ID")
+ggplot(meltwolbot, aes(x = reorder(flea.id, location), y = value, color = variable))+
+  geom_point(alpha = 0.7) + theme_char() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))+ylim(0, 2000)+
+  labs(y = "Number of Reads", color = "ASV", x = "Flea ID")
+```
+
+```{r}
+wolbseq <- ps.seq[wolborder$OTU] #get wolbachia sequences 
+wolbref <- readDNAStringSet(here("flea_main", "wolb_seq.fa"), format = "fasta") #wolbachia spp. reference strains 
+wolbabc <- c(wolbseq, wolbref)
+wolbnseq <- length(wolbabc)
+wolba <- msa(wolbabc, method = "ClustalW", type = "dna") #sequence alignment
+wolbb <- as.DNAbin(wolba) 
+wolbc <- as.matrix(wolbb)
+wolbd <- trimEnds(wolbc, min.n.seq = wolbnseq) #Trim sequences to same length
+wolbtrim <- trimEnds(wolbb, min.n.seq = wolbnseq) #Trim sequences 
+wolbe <- ape::dist.dna(wolbd) 
+wolbf <- ape::nj(wolbd)
+wolbf$tip.label <- labels(wolbd)
+``` 
+
+```{r}
+wolbh <- as.dna(wolbd)
+wolbhap <- haplotypes::haplotype(wolbh)
+wolbnhap <- length(wolbhap@haplist)
+wolbhap.seq <- data.frame(wolbhap@sequence)
+haplotype.assign <- wolbhap@haplist
+wolbdist.mat.m <- wolbhap@d
+wolbvec <- paste0("H", 1:wolbnhap)
+rownames(wolbdist.mat.m) <- as.character(wolbvec)
+colnames(wolbdist.mat.m) <- as.character(wolbvec)
+heatmap(wolbdist.mat.m)
+```
+
+```{r}
+write.csv(wolbdist.mat.m, here("flea_main", "Wolbachia", "distance_mat.csv"))
+```
+
+```{r, fig.height = 10, fig.width = 10}
+tip.labs <- c(paste0("H", 1:wolbnhap))
+for(i in 1:wolbnhap){
+  tip.labs[i] <- paste(unlist(gsub(" .*", "", haplotype.assign[i][[1]])), collapse = ", ")
+}
+```
+
+
+```{r}
+wolbhap.dna <- as.dna(wolbhap)
+wolbhap.bin <- haplotypes::as.DNAbin(wolbhap.dna)
+wolbhap.mat <- as.matrix(wolbhap.bin)
+wolbhapdist <- dist.dna(wolbhap.mat)
+wolbhapnj <- nj(wolbhapdist)
+wolbhapnj$tip.label <- tip.labs
+wolbhapnj$edge.length <- ifelse(wolbhapnj$edge.length < 0, 0, wolbhapnj$edge.length)
+ggtree(wolbhapnj, aes(), branch.length = 'branch.length')+
+  geom_tiplab(size = 3)+
+  geom_treescale()
+ggsave(plot = last_plot(), here("flea_main", "Wolbachia", "bart_tree.png"), height = 10, width = 10)
+ape::write.tree(wolbhapnj, file = here("flea_main", "Wolbachia", "wolb_newwick"))
+```
+## Rhodococcus
+```{r}
+rhodo.melt <- comparison %>% dplyr::filter(Genus == "Rhodococcus")
+rhodoorder <- sequencedata %>% filter(Genus == "Rhodococcus")
+rhodo.melt$Species <- factor(rhodo.melt$Species, levels = rhodoorder$Species)
+```
+
+```{r}
+sequencedata %>% dplyr::filter(Genus == "Rhodococcus") %>% mutate(OTU = fct_reorder(OTU, plyr::desc(Abundance))) %>% 
+  ggplot(aes(x = OTU, y = Abundance))+
+  geom_col(color = "Black", fill = "white")+
+  theme_char()+ labs(y = "Number of Reads", x = "")+
+  theme(legend.position = "none", axis.text.x = element_blank())
+```
+
+
+```{r, fig.height = 15, fig.width = 15}
+rhodo.melt %>% dplyr::filter(Abundance > 0) %>% 
+  ggplot(aes(y=Abundance, x=location, color = location)) +
+  geom_jitter(alpha = 0.5)+
+  facet_wrap(~Species)+
+  labs(y="Proportion of NGS reads", x="Location", color = "Location", title = "Rhodococcus ASVs by Location") +
+  theme_char() + scale_color_jama()+guides(color = guide_legend(nrow = 1))+
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom")
+  ggsave(here("flea_main", "Image", "rhodolocasv.png"), height = 20, width = 20, plot = last_plot())
+```
+
+
+```{r}
+sequencedata %>% dplyr::filter(Genus == "Rhodococcus") %>% mutate(OTU = fct_reorder(OTU, plyr::desc(Abundance))) %>% 
+  ggplot(aes(y = Abundance, x = 1))+
+  geom_sina(alpha = 0.7)+
+  theme_char()+ labs(y = "Number of Reads", x = "")+
+  theme(legend.position = "none", axis.text.x = element_blank())
+```
+
+```{r}
+otutab <- as.data.frame(otu_table(psdecon))
+rhodootutab <- otutab %>% select(rhodoorder$OTU)
+rhodootutab$Sum <- rowSums(rhodootutab)
+rhodootutabpos <- rhodootutab %>% filter(Sum > 0)
+kbl(rhodootutabpos) %>% 
+  kable_classic %>% 
+  kable_styling(full_width = F)
+```
+
+```{r, fig.width = 12}
+allrhodo <- rhodootutab
+allrhodo$co <- apply(allrhodo, 1, function(x) length(which(x > 0)))
+allrhodo$flea.id <- rownames(allrhodo)
+allrhodorow <- full_join(allrhodo, flea.info, by = "flea.id")
+ggplot(allrhodorow, aes(x = co, y = ..count.., fill = location)) +
+  geom_bar(color = "black")+
+  geom_text(stat = 'count', aes(label = ..count..), vjust = -0.5)+
+  facet_wrap(~location, nrow = 1)+
+  scale_fill_jama()+
+  labs(x = "Number of Unique Rhodococcus ASVs", y = "Number of Fleas", fill = "Location")+
+  theme_char()+
+  guides(fill = guide_legend(nrow = 1))+
+  theme(legend.position = "bottom")
+```
+
+```{r}
+rhodoasvnum <- rhodootutabpos %>% select(-Sum)
+rhodoasvnum <- as.data.frame(apply(rhodoasvnum, 2, function(x) sum(x > 0)))
+rhodoasvnum$ASV <- rownames(rhodoasvnum)
+colnames(rhodoasvnum) <- c("nflea", "ASV")
+ggplot(rhodoasvnum, aes(x = nflea))+
+  geom_histogram()+
+  geom_text(aes(label = ..count..), stat = "count")+
+  theme_char()
+```
+
+
+The average flea with > 0 Wolbachia ASVs had `r avwol` different Wolbachia ASVs
+
+## Achromobacter
+```{r}
+hath.melt <- comparison %>% dplyr::filter(Genus == "Achromobacter")
+hathorder <- sequencedata %>% filter(Genus == "Achromobacter")
+hath.melt$Species <- factor(hath.melt$Species, levels = unique(hathorder$Species))
+```
+
+```{r}
+hath.melt %>% dplyr::filter(Abundance > 0) %>% 
+  ggplot(aes(y=Abundance, x=Species, color = location)) +
+  geom_point(alpha = 0.5)+
+  labs(y="Proportion of NGS reads",  title = "Achromobacter ASVs by Location") +
+  theme_char() + scale_color_jama()+guides(color = guide_legend(nrow = 1))+
+  theme(panel.grid.major.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom")
+  ggsave(here("flea_main", "Image", "hathlocasv.png"), height = 20, width = 20, plot = last_plot())
+```
+
+```{r}
+hathseq <- ps.seq[hathorder$OTU] #get Achromobacter sequences 
+writeXStringSet(hathseq, filepath = here("flea_main", "hath_seq.fasta"))
+``` 
+
+
+
+## DNA Concentration
+
+### DNA Concentration after PCR 
+
+```{r, fig.height = 4, fig.width = 7}
+flea.info <- flea.info %>% filter(location != "Negative Control")
+flea.info <- flea.info %>% filter(flea.id %in% flea.cox1$flea.id)
+flea.info$LibrarySize <- sample_sums(psdecon)
+flea.info %>% 
+  ggplot(aes(x = location, y = quant_reading, color = location))+
+  geom_boxplot()+
+  geom_sina()+ theme_char()+ theme(legend.position = "none")+
+  labs(x = "", y = "DNA Concentration After PCR")
+ggsave(plot = last_plot(), here("flea_main", "Image", "dnaconcafter.png"), height = 7.5, width = 13.33)
+```
+
+```{r}
+flea.info %>% 
+  ggplot(aes(x = nguL, y = quant_reading, color = location))+
+  geom_point(alpha = 0.7)+
+  theme_char()+ theme(legend.position = "right")+
+  labs(x = "DNA Concentration After Extraction", y = "DNA Concentration After PCR", color = "Location")
+```
+
+
+```{r}
+flea.info %>% ggplot(aes(x = quant_reading, y = LibrarySize, color = location))+
+  geom_point(alpha = 0.5)+
+  theme_char()+
+  theme(axis.text.x = element_blank(), legend.position = "bottom")+
+  labs(x = "DNA Concentration", color = "Location")
+```
+
+**Frequency by DNA Concentration**
+```{r, fig.width = 10, fig.height = 10}
+plot_frequency(psdecon, taxa_names(psdecon)[c(1:20)], conc = "quant_reading")
+```
+
+### DNA Concentration After Extraction 
+
+```{r, fig.height = 5, fig.width = 10}
+flea.info <- flea.info %>% filter(location != "Negative Control")
+flea.info$LibrarySize <- sample_sums(psdecon)
+flea.info %>% 
+  ggplot(aes(x = location, y = nguL, color = location))+
+  geom_boxplot()+
+  geom_jitter()+ theme_char()+ theme(legend.position = "none")+
+  labs(x = "Location", y = "DNA Concentration After Extraction")
+```
+
+```{r}
+flea.info %>% ggplot(aes(x = nguL, y = LibrarySize, color = location))+
+  geom_point(alpha = 0.5)+
+  theme_char()+
+  theme(axis.text.x = element_blank(), legend.position = "bottom")+
+  labs(x = "DNA Concentration", color = "Location")
+```
+
+```{r, fig.width = 10, fig.height = 10}
+plot_frequency(psdecon, taxa_names(psdecon)[c(1:20)], conc = "nguL")
+```
+
+```{r}
+comparison.prop %>% 
+  ggplot(aes(y = Rickettsia, x = Bartonella, color = location))+
+  geom_point(alpha = 0.5)+ theme_char()
+```
+
+```{r}
+comp.bartrick <- data.frame(count = c(comparison.glom$Rickettsia, comparison.glom$Bartonella), flea.id = c(comparison.glom$flea.id, comparison.glom$flea.id), genus = c(rep("Rickettsia", nrow(comparison.glom)), rep("Bartonella", nrow(comparison.glom))))
+comp.bartrick$genus <- factor(comp.bartrick$genus, levels = c("Bartonella", "Rickettsia"))
+comp.bartrick <- comp.bartrick %>% filter(count > 0)
+comp.bartrick %>% 
+  ggplot(aes(y = count, x = flea.id, fill = genus))+
+  geom_col(position = "dodge")
+```
+
+```{r}
+comparison.glom %>% filter(Rickettsia > 0 | Bartonella > 0) %>% 
+  ggplot(aes(y = Rickettsia, x = Bartonella, color = location))+
+  geom_point(alpha = 0.5)+ theme_char()
+```
+
+```{r}
+t.test(comparison.glom$Bartonella, comparison.glom$Rickettsia)
+```
+
+```{r}
+comparison.glom %>% 
+  ggplot(aes(y = Rickettsia, x = Wolbachia, color = location))+
+  geom_point(alpha = 0.5)+ theme_char()
+```
+
+```{r}
+t.test(comparison.glom$Wolbachia, comparison.glom$Rickettsia)
+```
+
+```{r}
+comparison.glom %>% 
+  ggplot(aes(y = Bartonella, x = Wolbachia, color = location))+
+  geom_point(alpha = 0.5)+ theme_char()
+```
+
+```{r}
+t.test(comparison.glom$Wolbachia, comparison.glom$Bartonella)
+```
+
+```{r, fig.height = 10}
+bartorder <- sequencedata %>% filter(Genus == "Bartonella")
+rickorder <- sequencedata %>% filter(Genus == "Rickettsia")
+bartotu <- otutab %>% select(bartorder$OTU)
+bartotu <- as.data.frame(ifelse(bartotu > 0, 1, 0))
+rickotu <- otutab %>% select(rickorder$OTU)
+rickotu <- as.data.frame(ifelse(rickotu > 0, 1, 0))
+posotu <- as.data.frame(ifelse(otutab > 0, 1, 0))
+
+asv.totals <- data.frame(newname = c(paste0(colnames(posotu), " (", colSums(posotu), ")")), ASV = colnames(posotu))
+
+combos <- expand.grid(bartorder$OTU, rickorder$OTU)
+
+
+
+for(i in 1:nrow(combos)){
+n <- sum(select(posotu, combos[i,1]) == 1 & select(posotu, combos[i,2]) == 1)
+combos[i,3] <- n}
+
+colnames(combos) <- c("ASV", "ASV1", "V3")
+
+combos <- left_join(combos, asv.totals, by = "ASV")
+colnames(combos) <- c("trash", "ASV", "V3", "ASV1")
+combos <- left_join(combos, asv.totals, by = "ASV")
+colnames(combos) <- c("trash", "trash1", "V3", "ASV1", "ASV2")
+combos$ASV1 <- factor(combos$ASV1, levels = order.bart.n)
+combos$ASV2 <- factor(combos$ASV2, levels = order.rick.n)
+combos$V3 <- ifelse(combos$V3 == 0, NA, combos$V3)
+
+combos  %>% 
+  ggplot(aes(x = ASV1, y = ASV2, fill = V3))+
+    geom_tile(color = "black")+theme_char()+
+    theme(axis.text.x = element_text(angle = 90, hjust = 1), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    scale_fill_gradient2(low = "white", high = "blue", na.value = "black")+
+  theme(axis.title = element_blank(), legend.title = element_text(size = 11))+
+  labs(fill = "Fleas")
+```
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+

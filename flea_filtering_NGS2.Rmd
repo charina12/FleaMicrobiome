@@ -1,0 +1,389 @@
+---
+title: "flea_decontam_by_asv"
+author: "Charlotte Manvell"
+date: "06/28/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, results = 'hide', message=F, warning=F}
+library(dada2); packageVersion("dada2")
+library(phyloseq); packageVersion("phyloseq")
+library(dplyr)
+library(here)
+library(ggplot2)
+library(filesstrings)
+library(GEOquery)
+library(ape)
+library(vegan)
+library(RVAideMemoire)
+library(kableExtra)
+library(janitor)
+library(ggsci)
+library(decontam); packageVersion("decontam")
+library(RColorBrewer)
+library(ggforce)
+library(ggtext)
+library(glue)
+```
+
+```{r}
+path <- here("flea_main")
+ps <- readRDS(here("flea_main", "Fleapsnew.rds"))
+flea.info <- read.csv(here("flea_main", "FleaInfo.csv"))
+salter <- read.csv(here("flea_main", "ContaminantsList.csv"))
+phyloseq_table <- phyloseq(sample_data(flea.info))
+rownames(flea.info) <- flea.info$flea.id
+sample_data(ps) <- flea.info
+tax_table <- as.data.frame(tax_table(ps))
+tax_table <- data.frame(tax_table[1:6], tax_table[8])
+tax_table(ps) <- as.matrix(tax_table)
+ps
+```
+
+```{r}
+ps.taxasums <- data.frame(taxa_sums(ps))
+names(ps.taxasums) <- "taxa_sums"
+prev.ps = apply(X = otu_table(ps),
+                  MARGIN = ifelse(taxa_are_rows(ps), yes = 1, no = 2),
+                  FUN = function(x){sum(x > 0 )})
+prev.ps = data.frame(Prevalence = prev.ps, 
+                       TotalAbundance = taxa_sums(ps),
+                       tax_table(ps))
+theme_char <- function(base_size = 11, base_family = ""){
+  theme_bw() %+replace%
+    theme(axis.text = element_text(color = "Black"))
+}
+theme_set(theme_char())
+theme_blank <- function(base_size = 11, base_family = ""){
+    theme_bw() %+replace%
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text = element_text(color = "Black"))}
+```
+
+```{r, fig.width = 10, fig.height = 4 }
+df.ps <- as.data.frame(sample_data(ps)) #create dataframe of sample data
+df.ps$LibrarySize <- sample_sums(ps)
+ggplot(df.ps, aes(x = reorder(flea.id, LibrarySize), y = LibrarySize, color = location))+
+  geom_point(alpha = 0.5)+
+  theme_blank()+
+  theme(legend.position = "bottom")+
+  labs(x = "Sample ID", color = "Sample or Control")
+ggsave(filename = here("flea_main", "librarysize.png"), width = 10, height = 4, plot = last_plot())
+```
+```{r}
+ggplot(df.ps, aes(x = quant_reading, y = LibrarySize, color = location))+
+  geom_point(alpha = 0.5)+
+  theme_char()+
+  theme(axis.text.x = element_blank(), legend.position = "bottom")
+```
+
+
+```{r}
+ggplot(ps.taxasums, aes(x = taxa_sums))+
+  geom_histogram(color = "Black", binwidth = 1)+xlim(0,10)+
+  labs(title = "Number of Reads per ASV", x = "Number of Reads", y = "Number of ASVs")
+```
+
+```{r}
+ggplot(ps.taxasums, aes(x = taxa_sums))+
+  geom_histogram(color = "Black", binwidth = 1)+xlim(0,25)+
+  labs(title = "Number of Reads per ASV", x = "Number of Reads", y = "Number of ASVs")
+```
+
+```{r}
+ps.taxasums$Color <- ifelse(ps.taxasums$taxa_sums < 3, "Removed", "Included")
+ggplot(ps.taxasums, aes(x = taxa_sums, fill = Color))+
+  theme_char()+
+  geom_histogram(color = "Black", binwidth = 1)+xlim(0,50)+
+  labs(title = "Number of Reads per ASV", x = "Number of Reads", y = "Number of ASVs")+
+  scale_fill_manual(values = c("grey50", "firebrick2"))+
+  theme(legend.position = "none")
+  ggsave(filename = here("flea_main", "numASV50.png"), plot = last_plot(), height = 5, width = 7)
+```
+
+```{r}
+ps.contam.asv <- data.frame(filter(ps.taxasums, ps.taxasums$taxa_sums <3))
+ps.taxasums1 <- ps.taxasums %>% filter(taxa_sums > 2)
+ps.taxasums1$low <- rownames(ps.taxasums1)
+ps.asvread <- prune_taxa(ps.taxasums1$low, ps)
+
+new.tax <- as.data.frame((tax_table(ps.asvread)))
+length(unique(new.tax$Genus))                       
+```
+
+```{r, fig.width = 13, fig.height = 4 }
+df <- as.data.frame(sample_data(ps.asvread)) #create dataframe of sample data
+df$LibrarySize <- sample_sums(ps.asvread)
+ggplot(df, aes(x = reorder(flea.id, LibrarySize), y = LibrarySize, color = Sample_or_Control))+
+  geom_point()+
+  theme(axis.text.x = element_text(angle=90, hjust = 1, size = 6), legend.position = "bottom")+
+  labs(x = "Sample ID", color = "Sample or Control")
+  ggsave(filename = here("flea_main", "librarysize.png"), width = 13, height = 4, plot = last_plot())
+```
+
+```{r}
+asv.name <- as.data.frame(tax_table(ps.asvread))
+asv.name$OTU <- rownames(asv.name)
+sample_data(ps.asvread)$is.neg <- sample_data(ps.asvread)$Sample_or_Control == "Control"
+contamdf.prev <- isContaminant(ps.asvread, method = "prevalence", neg="is.neg", threshold = 0.90)
+contamdf.prev$OTU <- rownames(contamdf.prev)
+contaminant <- left_join(contamdf.prev, asv.name, by = "OTU") #True - contaminant, False - not contaminant 
+contaminant$color <- ifelse(contaminant$Genus == "Wolbachia" | contaminant$Genus == "Bartonella" | contaminant$Genus == "Rickettsia", contaminant$Genus, "Other")
+```
+
+
+## Decontam
+**Continue with contaminant removal with controls**
+``` {r, fig.height = 5, fig.width = 10}
+ps.pa <- transform_sample_counts(ps.asvread, function(abund) 1*(abund>0)) #creat dataframe with positive and negative abundance information
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$Sample_or_Control == "Control", ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$Sample_or_Control == "True Sample", ps.pa)
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg), contaminant=contamdf.prev$contaminant, Genus = contaminant$color, p = contaminant$p)
+df.pa$Genus[is.na(df.pa$Genus)] <- "Other"
+df.pa$Genus <- factor(df.pa$Genus, levels = c("Bartonella", "Rickettsia", "Wolbachia", "Other"))
+df.pa$alpha <- ifelse(df.pa$Genus == "Bartonella" | df.pa$Genus == "Rickettsia" | df.pa$Genus == "Wolbachia", 0.7, 0.2)
+df.pa$OTU <- rownames(df.pa)
+contaminant$pa.pos <- df.pa$pa.pos
+contaminant$pa.neg <- df.pa$pa.neg
+ggplot(df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) +
+  geom_point(alpha = 0.5)+
+  theme_char()+
+  theme(legend.position = "bottom")+
+  labs(x = "Prevalence (Negative Controls)", y = "Prevalence (True Samples)", title = "Prevalence of ASVs in Samples vs. Negative Controls", color = "Genus")
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontamASV.png"), width = 7, height = 5)
+```
+
+````{r, fig.height = 3, fig.width = 7}
+df.pa %>% filter(pa.neg < 1) %>% 
+  ggplot(aes(x=1, y=pa.pos, color = Genus, alpha = alpha)) +
+  geom_jitter()+
+  theme_blank()+
+  theme(legend.position = "bottom", )+
+  labs(y = "Prevalence (True Samples)", title = "Prevalence of ASVs Only Found in True Samples", color = "Genus")+scale_color_manual(values = c("Red", "Red", "Red", "Gray"))+ scale_alpha(guide = 'none')
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontam_lowabundASV.png"), width = 10, height = 5)
+```
+
+````{r}
+df.pa %>% filter(pa.neg < 1) %>% 
+  ggplot(aes(x=pa.pos, y=p, color = Genus)) +
+  geom_jitter(alpha = 0.5)+
+  theme_char()+
+  theme(legend.position = "bottom", )+
+  labs(y = "p-value", x = "Prevalence (True Samples)", title = "Prevalence of ASVs Only Found in True Samples", color = "Genus")+scale_color_manual(values = c("Red", "Red", "Red", "Gray"))+ scale_alpha(guide = 'none')
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontam_lowabundASV.png"), width = 7, height = 5)
+```
+
+```{r}
+ggplot(df.pa, aes(x=pa.neg, y=p, color = Genus)) +
+  geom_point(alpha = 0.4)+
+  theme_char()+
+  theme(legend.position = "bottom")+
+  labs(x = "Prevalence (Negative Controls)", y = "p-value", color = "Genus")+scale_color_manual(values = c("Red", "Red", "Red", "Black"))
+```
+
+
+```{r}
+df.pa %>% filter(Genus == "Bartonella" | Genus == "Wolbachia" | Genus == "Rickettsia") %>% filter(pa.pos > 0) %>% 
+  ggplot(aes(x=pa.neg, y=pa.pos, color=Genus)) +
+  geom_jitter(alpha = 0.5)+
+  theme_char()+
+  theme(legend.position = "bottom")+
+  labs(x = "Prevalence (Negative Controls)", y = "Prevalence (True Samples)", title = "Prevalence of Bartonella, Wolbachia, or Rickettsia ASVs", color = "Genus")+theme(panel.grid.major = element_blank())
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontamASVbig3.png"), width = 7, height = 5)
+```
+
+```{r}
+df.pa %>% filter(pa.neg < 1) %>% filter(Genus == "Bartonella" | Genus == "Wolbachia" | Genus == "Rickettsia") %>% 
+  ggplot(aes(x=1, y=pa.pos, color = Genus, alpha = alpha)) +
+  geom_jitter()+
+  theme_blank()+
+  theme(legend.position = "bottom")+
+  labs(y = "Prevalence (True Samples)", title = "Prevalence of ASVs Only Found in True Samples", color = "Genus")+ 
+  scale_alpha(guide = 'none')
+```
+
+```{r}
+df.pa %>% filter(Genus == "Wolbachia" | Genus == "Bartonella" | Genus == "Rickettsia") %>% 
+  ggplot(aes(y = p, x = pa.neg))+
+  geom_point(alpha = 0.5)+theme_char()+theme(panel.grid.major = element_blank())+
+  facet_wrap(~Genus)+
+  labs(y = "p-value", x = "Prevalence (Negative Control)")
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontam_pvalue_big3.png"), width = 7, height = 5)
+```
+
+```{r}
+df.pa %>% filter(Genus == "Wolbachia" | Genus == "Bartonella" | Genus == "Rickettsia") %>% 
+  ggplot(aes(y = p, x = pa.pos, color = as.factor(pa.neg)))+
+  geom_jitter(alpha = 0.5)+theme_char()+theme(panel.grid.major = element_blank())+
+  facet_wrap(~Genus)+
+  labs(y = "p-value", x = "Prevalence (Positive Control)", color = "Prevalence (Negative Control)")+
+  theme(legend.position = "bottom")
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontam_pvaluepos_big3.png"), width = 7, height = 5)
+```
+
+```{r, fig.height = 5, fig.width = 10}
+df.pa %>% filter(df.pa$p >0) %>% 
+  ggplot()+
+  geom_jitter(aes(y = p, x = reorder(OTU, p)), alpha = 0.3)+
+  geom_hline(aes(yintercept = 0.55), color = "red")+
+  theme_blank()+labs(y = "p-value", x = "OTU", title = "p-value of All ASVs")
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontam_allpvalue.png"), width = 10, height = 5)
+```
+
+```{r, fig.height = 5, fig.width = 10}
+df.pa %>% filter(df.pa$p >0) %>% 
+  ggplot()+
+  geom_jitter(aes(y = p, x = reorder(OTU, p), color = as.factor(pa.neg)), alpha = 0.3)+
+  geom_hline(aes(yintercept = 0.90), color = "black")+
+  theme_char()
+```
+
+
+```{r, fig.height = 3.5, fig.width = 6.5}
+good <- contaminant %>% filter(p > 0.89) %>% filter(Genus != "Other")
+genera.interest <- unique(good$Genus)
+length(genera.interest)
+red.green.palette <- brewer.pal(n = 11, name = "RdYlGn")
+red.green.palette[5] <- "#ffc000"
+red.green.palette[6] <- "#fcd145"
+red.green.palette <- rev(red.green.palette)
+red.green.palette[8] <- "#fd850d"
+
+contaminant %>% filter(Genus %in% genera.interest) %>% mutate(GenusItal = glue("<i>{Genus}</i>")) %>% 
+   ggplot(aes(y = p, x = pa.pos, color = as.factor(pa.neg)))+
+  geom_jitter(alpha = 0.95)+theme_char()+theme(panel.grid.major = element_blank())+
+  geom_hline(yintercept = 0.89, linetype = "dashed")+
+  facet_wrap(~GenusItal, nrow = 2)+
+  labs(y = "p-value", x = "Prevalence (Positive Control)", color = "Prevalence (Negative Control)")+
+  theme(legend.position = "bottom", strip.text = element_markdown(size = 10))+
+  guides(color = guide_legend (nrow = 1))+scale_color_manual(values = c(red.green.palette))
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontamgeneraofinterest.png"), width = 14, height = 7)
+```
+
+```{r, fig.height = 6, fig.width = 7.5}
+genera.interest1 <- c("Bartonella", "Rickettsia",  "Wolbachia", "Achromobacter", "Peptoniphilus", "Rhodococcus")
+
+red.green.palette <- brewer.pal(n = 11, name = "RdYlGn")
+red.green.palette[5] <- "#ffc000"
+red.green.palette[6] <- "#fcd145"
+red.green.palette <- rev(red.green.palette)
+red.green.palette[8] <- "#fd850d"
+plot.for <- contaminant %>% filter(Genus %in% genera.interest1)
+plot.for$Genus <- factor(plot.for$Genus, levels = genera.interest1)
+plot.for %>% filter(Genus %in% genera.interest1) %>% 
+   ggplot(aes(y = p, x = pa.pos, color = as.factor(pa.neg)))+
+  geom_jitter(alpha = 0.95)+theme_char()+theme(panel.grid.major = element_blank())+
+  facet_wrap(~Genus, nrow = 2)+
+  labs(y = "p-value", x = "Prevalence (Positive Control)", color = "Prevalence (Negative Control)")+
+  geom_hline(yintercept = 0.89, linetype = "dashed")+
+  theme(legend.position = "bottom", strip.text = element_text(size = 8))+
+  guides(color = guide_legend (nrow = 1))+scale_color_manual(values = c(red.green.palette))
+ggsave(plot = last_plot(), filename = here("flea_main", "Image", "decontamgeneraofinterest.png"), width = 14, height = 7)
+```
+
+```{r}
+true <- contaminant %>% filter(contaminant == FALSE)
+nrow(true)
+write.csv(contaminant, here("flea_main", "decontam_results.csv"))
+Rhodo <- contaminant %>% filter(Genus == "Rhodococcus")
+```
+
+
+
+```{r}
+potential <- contaminant %>% filter(p > 0.90) %>% filter(Genus != "NA")
+ggplot(potential, aes(x = Genus)) +
+  geom_bar()+theme_char()+
+  theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+```{r}
+ggplot(potential, aes(x = pa.neg, y = pa.pos))+
+  geom_point()
+```
+
+
+Number of ASVs with >0.90 p-value (equivalent to best Bartonella, Rickettsia, Wolbachia)
+
+```{r}
+length(potential)
+potential
+```
+## Save
+```{r}
+contaminant.decide <- contaminant
+contaminant.decide$contaminant <- ifelse(contaminant.decide$Genus == "Bartonella" | contaminant.decide$Genus == "Rickettsia" | contaminant.decide$Genus == "Wolbachia" | contaminant.decide$Genus == "Rhodococcus" | contaminant.decide$Genus == "Peptoniphilus" | contaminant.decide$Genus == "Achromobacter", FALSE, TRUE)
+contaminant.decide$Genus <- ifelse(contaminant.decide$pa.neg > 3, TRUE, contaminant.decide$contaminant)
+contaminant.decide[is.na(contaminant.decide)] <- TRUE
+contam.filt <- contaminant.decide[,1:7]
+noncon <- contam.filt %>% filter(contaminant == FALSE)
+ps.noncontam <- prune_taxa(noncon$OTU, ps.asvread)
+sample.keep <- flea.info %>% filter(Sample_or_Control != "Control")
+ps.noncontam <- prune_samples(sample.keep$flea.id, ps.noncontam)
+#saveRDS(ps.noncontam, file = here("flea_main", "ps_noncontam.Rds")) ##Save phyloseq containing noncontaminants'
+ps_tax <- as.data.frame(tax_table(ps.noncontam))
+```
+
+```{r}
+dna.length <- as.data.frame(width(ps.noncontam@refseq))
+tax.noncontam <- as.data.frame(tax_table(ps.noncontam))
+colnames(dna.length) <- "dna.length"
+dna.length$Genus <- tax.noncontam$Genus
+ggplot(dna.length, aes(y = dna.length, x = Genus, color = Genus))+
+  geom_sina(alphs = 0.4)+scale_color_jama()
+```
+
+# New Filtering
+
+```{r}
+target <- c("Bartonella", "Rickettsia", "Wolbachia")
+ps.neg <- prune_samples(sample_data(ps.asvread)$Sample_or_Control == "Control", ps.asvread)
+ps.pos <- prune_samples(sample_data(ps.asvread)$Sample_or_Control == "True Sample", ps.asvread)
+df.mine <- data.frame(pos.abund = taxa_sums(ps.pos), neg.abund = taxa_sums(ps.neg), 
+                      pos.bin = taxa_sums(ps.pa.pos), neg.bin = taxa_sums(ps.pa.neg))
+df.mine <- df.mine %>% mutate(pos.per = pos.abund/pos.bin,
+                              neg.per = neg.abund/neg.bin)
+df.mine$pos.per <- ifelse(df.mine$pos.per == "NaN", 0, df.mine$pos.per)
+df.mine$neg.per <- ifelse(df.mine$neg.per == "NaN", 0, df.mine$neg.per)
+
+df.mine <- df.mine %>% mutate(ratio = pos.per/neg.per) %>% mutate(ASV = rownames(df.mine)) 
+tax_add <- tax_table %>% mutate(ASV = rownames(tax_table))
+df.mine <- left_join(df.mine, tax_add, by = "ASV")
+
+df.mine$salter <- ifelse(df.mine$Genus %in% salter$Genus, "contaminant", "noncontam")
+df.mine$known <- ifelse(df.mine$Genus %in%  target, "known member", "unknown")
+df.look <- df.mine %>% filter(ratio != "Inf")
+
+df.mine %>% filter(Genus == "Rickettsia") %>% 
+ggplot( aes(y = pos.per, x = neg.per))+
+  geom_point()
+
+ggplot(df.mine, aes(y = pos.per, x = neg.per))+
+  geom_point()+xlim(0, 1000)+ylim(0,1000)+
+  geom_abline(slope = 1)
+```
+
+```{r}
+df.mine %>% filter(Genus %in% target) %>% 
+  ggplot(aes(y = pos.per, x = neg.per, color = known))+
+  geom_point()+
+  geom_abline(slope = 2.2)
+```
+
+
+```{r}
+df.maybe <- df.mine %>% filter(ratio > 2.2)
+df.maybe1 <- df.maybe %>% filter(ratio != "Inf")
+```
+
+
+
+```{r}
+sessionInfo()
+```
